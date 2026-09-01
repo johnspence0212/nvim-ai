@@ -19,15 +19,16 @@ local remembered_width
 local session_slot = "idle"
 local layout_lock = false
 local saved_laststatus
+local saved_ruler
 
 local function style()
   vim.api.nvim_set_hl(0, "NaiTopBar", { bg = TOPBAR_BG, fg = "#ffffff" })
   vim.api.nvim_set_hl(0, "TabLine", { bg = TOPBAR_BG, fg = "#ffffff" })
   vim.api.nvim_set_hl(0, "TabLineFill", { bg = TOPBAR_BG, fg = "#c0caf5" })
   vim.api.nvim_set_hl(0, "TabLineSel", { bg = TOPBAR_BG, fg = "#ffffff" })
-  vim.api.nvim_set_hl(0, "NaiStroke", { fg = STROKE, bg = "NONE" })
-  vim.api.nvim_set_hl(0, "FloatBorder", { fg = STROKE, bg = "NONE" })
-  vim.api.nvim_set_hl(0, "WinBorder", { fg = STROKE, bg = "NONE" })
+  vim.api.nvim_set_hl(0, "NaiStroke", { fg = STROKE, bg = STROKE, bold = true })
+  vim.api.nvim_set_hl(0, "FloatBorder", { fg = STROKE, bg = STROKE, bold = true })
+  vim.api.nvim_set_hl(0, "WinBorder", { fg = STROKE, bg = STROKE, bold = true })
 end
 
 local function configure_buf(buf, name)
@@ -115,53 +116,51 @@ local function clamp_outer(width)
   return math.max(18, math.min(max, width))
 end
 
+-- Border is drawn outside (row, col). Convert an outer box (including
+-- border) on the screen grid into nvim_open_win's inner content rect.
+local function outer_to_nvim(box)
+  return {
+    row = box.r + 1,
+    col = box.c + 1,
+    width = math.max(1, box.w - 2),
+    height = math.max(1, box.h - 2),
+  }
+end
+
 local function layout_rects()
   local tab = vim.o.showtabline == 0 and 0 or 1
   local cmd = vim.o.cmdheight
-  local top = tab + GAP
-  local left = GAP
-  local height = vim.o.lines - tab - cmd - 2 * GAP
-  local width = vim.o.columns - 2 * GAP
-  if height < 8 then
-    height = math.max(4, vim.o.lines - tab - cmd)
-    top = tab
-  end
-  if width < 20 then
-    width = vim.o.columns
-    left = 0
-  end
+  -- Top border sits on the row under the tabline (no extra header pad).
+  -- Left, right, bottom, and between-card gutters are all GAP.
+  local grid_top = tab
+  local grid_left = GAP
+  local grid_bottom = vim.o.lines - 1 - cmd - GAP
+  local grid_right = vim.o.columns - 1 - GAP
+  local grid_h = math.max(4, grid_bottom - grid_top + 1)
+  local grid_w = math.max(8, grid_right - grid_left + 1)
 
-  local chat_outer = clamp_outer(column_outer())
-  if chat_outer > width - 16 then
-    chat_outer = math.max(18, width - 16)
+  local chat_w = clamp_outer(column_outer())
+  if chat_w > grid_w - 16 then
+    chat_w = math.max(18, grid_w - 16)
   end
-  local editor_outer = width - GAP - chat_outer
-  local composer_outer = COMPOSER_INNER + BORDER
-  if composer_outer + GAP + BORDER + 1 > height then
-    composer_outer = math.max(BORDER + 1, math.floor(height / 3))
+  local editor_w = grid_w - GAP - chat_w
+  local composer_h = COMPOSER_INNER + BORDER
+  if composer_h + GAP + BORDER + 1 > grid_h then
+    composer_h = math.max(BORDER + 1, math.floor(grid_h / 3))
   end
-  local transcript_outer = height - GAP - composer_outer
+  local transcript_h = grid_h - GAP - composer_h
+  local chat_c = grid_left + editor_w + GAP
 
   return {
-    editor = {
-      row = top,
-      col = left,
-      width = math.max(1, editor_outer - BORDER),
-      height = math.max(1, height - BORDER),
-    },
-    transcript = {
-      row = top,
-      col = left + editor_outer + GAP,
-      width = math.max(1, chat_outer - BORDER),
-      height = math.max(1, transcript_outer - BORDER),
-    },
-    composer = {
-      row = top + transcript_outer + GAP,
-      col = left + editor_outer + GAP,
-      width = math.max(1, chat_outer - BORDER),
-      height = math.max(1, composer_outer - BORDER),
-    },
-    chat_outer = chat_outer,
+    editor = outer_to_nvim({ r = grid_top, c = grid_left, w = editor_w, h = grid_h }),
+    transcript = outer_to_nvim({ r = grid_top, c = chat_c, w = chat_w, h = transcript_h }),
+    composer = outer_to_nvim({
+      r = grid_top + transcript_h + GAP,
+      c = chat_c,
+      w = chat_w,
+      h = composer_h,
+    }),
+    chat_outer = chat_w,
   }
 end
 
@@ -269,7 +268,11 @@ function M.show()
     if saved_laststatus == nil then
       saved_laststatus = vim.o.laststatus
     end
+    if saved_ruler == nil then
+      saved_ruler = vim.o.ruler
+    end
     vim.o.laststatus = 0
+    vim.o.ruler = false
 
     local root = root_win()
     if not code_buf or not vim.api.nvim_buf_is_valid(code_buf) then
@@ -321,6 +324,10 @@ function M.hide()
     if saved_laststatus ~= nil then
       vim.o.laststatus = saved_laststatus
       saved_laststatus = nil
+    end
+    if saved_ruler ~= nil then
+      vim.o.ruler = saved_ruler
+      saved_ruler = nil
     end
     vim.api.nvim_set_current_win(root)
     code_win = root
