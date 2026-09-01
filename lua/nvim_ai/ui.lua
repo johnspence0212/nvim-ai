@@ -4,8 +4,11 @@ local STROKE = "#7aa2f7"
 local TOPBAR_BG = "#3d59a1"
 local COLUMN_FRACTION = 0.3
 local COMPOSER_INNER = 6
-local GAP = 1
+local EDGE = 1
+local GAP = 0
 local BORDER = 2
+-- Rounded corners, double sides: a bit thicker than ─│, still a line.
+local CARD_BORDER = { "╭", "═", "╮", "║", "╯", "═", "╰", "║" }
 
 local transcript_buf
 local composer_buf
@@ -131,11 +134,11 @@ local function layout_rects()
   local tab = vim.o.showtabline == 0 and 0 or 1
   local cmd = vim.o.cmdheight
   -- Top border sits on the row under the tabline (no extra header pad).
-  -- Left, right, bottom, and between-card gutters are all GAP.
+  -- EDGE is the margin to the frame; GAP is the gutter between cards.
   local grid_top = tab
-  local grid_left = GAP
-  local grid_bottom = vim.o.lines - 1 - cmd - GAP
-  local grid_right = vim.o.columns - 1 - GAP
+  local grid_left = EDGE
+  local grid_bottom = vim.o.lines - 1 - cmd - EDGE
+  local grid_right = vim.o.columns - 1 - EDGE
   local grid_h = math.max(4, grid_bottom - grid_top + 1)
   local grid_w = math.max(8, grid_right - grid_left + 1)
 
@@ -171,7 +174,7 @@ local function float_opts(rect, extra)
     col = rect.col,
     width = rect.width,
     height = rect.height,
-    border = "rounded",
+    border = CARD_BORDER,
     zindex = 50,
     focusable = true,
   }
