@@ -10,8 +10,7 @@ local YOU = "#7aa2f7"
 local QUEUED = "#e0af68"
 local MUTED = "#565f89"
 local TOPBAR_BG = "#3d59a1"
-local COLUMN_FRACTION = 0.3
-local COMPOSER_INNER = 12
+local COMPOSER_INNER = 6
 local EDGE = 1
 local GAP = 1
 local BORDER = 2
@@ -19,13 +18,58 @@ local CHEATSHEET_Z = 60
 local CHEATSHEET_LINES = {
   "Command cheatsheet",
   "",
-  "<leader>nn     hide/show Chat",
-  "<leader>nc     cancel (drops pending)",
+  "<leader>nn     reserved",
+  "<leader>nc     reserved",
+  "<leader>nq     cancel (drops pending)",
   "<leader>nk     this cheatsheet",
   "Enter          send (one pending while in flight)",
   "Shift-Enter    newline in Composer",
-  "<C-w>>         grow Chat column",
-  "<C-w><         shrink Chat column",
+}
+local FILE_EX = {
+  e = true,
+  edit = true,
+  ex = true,
+  enew = true,
+  find = true,
+  args = true,
+  argadd = true,
+  argedit = true,
+  next = true,
+  previous = true,
+  prev = true,
+  rewind = true,
+  first = true,
+  last = true,
+  b = true,
+  buffer = true,
+  bnext = true,
+  bprevious = true,
+  bprev = true,
+  bdelete = true,
+  bd = true,
+  bwipeout = true,
+  bunload = true,
+  split = true,
+  vsplit = true,
+  new = true,
+  vnew = true,
+  tabedit = true,
+  tabe = true,
+  tabnew = true,
+  pedit = true,
+}
+local QUIT_EX = {
+  q = true,
+  quit = true,
+  close = true,
+  clo = true,
+  hide = true,
+  only = true,
+  x = true,
+  xit = true,
+  exit = true,
+  wq = true,
+  wquit = true,
 }
 
 local transcript_buf
@@ -128,16 +172,40 @@ local function win_ok(win)
   return win ~= nil and vim.api.nvim_win_is_valid(win)
 end
 
-local function is_chat_win(win)
-  return win == transcript_win or win == composer_win
-end
-
 local function is_cheatsheet_win(win)
   return win == cheatsheet_win
 end
 
 local function visible()
-  return win_ok(transcript_win) and win_ok(composer_win) and win_ok(editor_win)
+  return win_ok(transcript_win) and win_ok(composer_win)
+end
+
+local function cmd_head(line)
+  local s = line:gsub("^%s+", ""):gsub("^:+", "")
+  s = s:gsub("^[-%%$.0-9,'<>]+", ""):gsub("^%s+", "")
+  local name = s:match("^([%a]+)")
+  return name and name:lower() or ""
+end
+
+local function is_qall(name)
+  return name == "qa"
+    or name == "qall"
+    or name == "wqa"
+    or name == "wqall"
+    or name == "xa"
+    or name == "xall"
+    or name == "quita"
+    or name == "quitall"
+    or name == "cq"
+    or name == "cquit"
+end
+
+local function block_ex(line)
+  local name = cmd_head(line)
+  if name == "" or is_qall(name) then
+    return false
+  end
+  return FILE_EX[name] == true or QUIT_EX[name] == true
 end
 
 local function close_win(win)
@@ -198,18 +266,6 @@ local COMPOSER_FLOAT = {
   footer_pos = "left",
 }
 
-local function column_outer()
-  if remembered_width then
-    return remembered_width
-  end
-  return math.max(24, math.floor(vim.o.columns * COLUMN_FRACTION))
-end
-
-local function clamp_outer(width)
-  local max = math.max(24, vim.o.columns - 28)
-  return math.max(18, math.min(max, width))
-end
-
 -- Border is drawn outside (row, col). Convert an outer box (including
 -- border) on the screen grid into nvim_open_win's inner content rect.
 local function outer_to_nvim(box)
@@ -222,39 +278,29 @@ local function outer_to_nvim(box)
 end
 
 local function layout_rects()
-  local tab = vim.o.showtabline == 0 and 0 or 1
   local cmd = vim.o.cmdheight
-  -- Top border sits on the row under the tabline (no extra header pad).
-  -- EDGE is the margin to the frame; GAP is the gutter between cards.
-  local grid_top = tab
+  -- Chat-only: no top bar. EDGE is the margin; GAP is the gutter between cards.
+  local grid_top = EDGE
   local grid_left = EDGE
   local grid_bottom = vim.o.lines - 1 - cmd - EDGE
   local grid_right = vim.o.columns - 1 - EDGE
   local grid_h = math.max(4, grid_bottom - grid_top + 1)
   local grid_w = math.max(8, grid_right - grid_left + 1)
 
-  local chat_w = clamp_outer(column_outer())
-  if chat_w > grid_w - 16 then
-    chat_w = math.max(18, grid_w - 16)
-  end
-  local editor_w = grid_w - GAP - chat_w
   local composer_h = COMPOSER_INNER + BORDER
   if composer_h + GAP + BORDER + 1 > grid_h then
     composer_h = math.max(BORDER + 1, math.floor(grid_h / 3))
   end
   local transcript_h = grid_h - GAP - composer_h
-  local chat_c = grid_left + editor_w + GAP
 
   return {
-    editor = outer_to_nvim({ r = grid_top, c = grid_left, w = editor_w, h = grid_h }),
-    transcript = outer_to_nvim({ r = grid_top, c = chat_c, w = chat_w, h = transcript_h }),
+    transcript = outer_to_nvim({ r = grid_top, c = grid_left, w = grid_w, h = transcript_h }),
     composer = outer_to_nvim({
       r = grid_top + transcript_h + GAP,
-      c = chat_c,
-      w = chat_w,
+      c = grid_left,
+      w = grid_w,
       h = composer_h,
     }),
-    chat_outer = chat_w,
   }
 end
 
@@ -308,13 +354,24 @@ local function relayout()
     return
   end
   local rects = layout_rects()
-  remembered_width = rects.chat_outer
-  place(editor_win, code_buf, rects.editor, nil, false)
   place(transcript_win, transcript_buf, rects.transcript, TRANSCRIPT_FLOAT, false)
   place(composer_win, composer_buf, rects.composer, COMPOSER_FLOAT, false)
 end
 
-local function remember_code_win()
+local function focus_composer()
+  if not win_ok(composer_win) then
+    return
+  end
+  vim.api.nvim_set_current_win(composer_win)
+  vim.schedule(function()
+    if win_ok(composer_win) then
+      vim.api.nvim_set_current_win(composer_win)
+      vim.cmd("startinsert")
+    end
+  end)
+end
+
+local function bounce_backdrop()
   if layout_lock then
     return
   end
@@ -322,33 +379,34 @@ local function remember_code_win()
   if not win_ok(cur) then
     return
   end
-  local buf = vim.api.nvim_win_get_buf(cur)
-  if buf == backdrop_buf or buf == transcript_buf or buf == composer_buf or buf == cheatsheet_buf then
-    if buf == backdrop_buf and win_ok(editor_win) then
-      vim.api.nvim_set_current_win(editor_win)
-    end
-    return
-  end
-  if not is_chat_win(cur) then
-    code_win = cur
+  if vim.api.nvim_win_get_buf(cur) == backdrop_buf and win_ok(composer_win) then
+    vim.api.nvim_set_current_win(composer_win)
   end
 end
 
-local function capture_code()
-  local win = vim.api.nvim_get_current_win()
-  local buf = vim.api.nvim_win_get_buf(win)
-  if buf ~= transcript_buf and buf ~= composer_buf and buf ~= backdrop_buf and buf ~= cheatsheet_buf then
-    code_buf = buf
-    if vim.api.nvim_win_get_config(win).relative == "" then
-      code_win = win
+local function first_file_arg()
+  for _, name in ipairs(vim.fn.argv()) do
+    if name ~= "" then
+      local path = vim.fn.fnamemodify(name, ":p")
+      if vim.fn.isdirectory(path) == 0 then
+        return path
+      end
     end
+  end
+end
+
+local function capture_waiting()
+  local path = first_file_arg()
+  if not path then
+    code_buf = nil
     return
   end
-  local root = root_win()
-  local root_buf = vim.api.nvim_win_get_buf(root)
-  if root_buf ~= backdrop_buf and root_buf ~= transcript_buf and root_buf ~= composer_buf and root_buf ~= cheatsheet_buf then
-    code_buf = root_buf
-    code_win = root
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    local name = vim.api.nvim_buf_get_name(buf)
+    if name ~= "" and vim.fn.fnamemodify(name, ":p") == path then
+      code_buf = buf
+      return
+    end
   end
 end
 
@@ -361,11 +419,12 @@ end
 function M.show()
   style()
   ensure_bufs()
+  capture_waiting()
   if visible() then
     relayout()
+    focus_composer()
     return
   end
-  capture_code()
   layout_lock = true
   local ok, err = pcall(function()
     if saved_laststatus == nil then
@@ -374,28 +433,21 @@ function M.show()
     if saved_ruler == nil then
       saved_ruler = vim.o.ruler
     end
+    vim.o.showtabline = 0
     vim.o.laststatus = 0
     vim.o.ruler = false
 
     local root = root_win()
-    if not code_buf or not vim.api.nvim_buf_is_valid(code_buf) then
-      code_buf = vim.api.nvim_win_get_buf(root)
-    end
     vim.api.nvim_win_set_buf(root, backdrop_buf)
     apply_backdrop(root)
 
     local rects = layout_rects()
-    remembered_width = rects.chat_outer
-    editor_win = place(editor_win, code_buf, rects.editor, nil, false)
-    apply_card(editor_win, { minimal = false })
     transcript_win = place(transcript_win, transcript_buf, rects.transcript, TRANSCRIPT_FLOAT, false)
     apply_card(transcript_win, { minimal = true, pad = true })
     vim.wo[transcript_win].breakindent = true
     composer_win = place(composer_win, composer_buf, rects.composer, COMPOSER_FLOAT, false)
     apply_card(composer_win, { minimal = true, pad = true })
-
-    vim.api.nvim_set_current_win(editor_win)
-    code_win = editor_win
+    focus_composer()
   end)
   layout_lock = false
   if not ok then
@@ -403,55 +455,9 @@ function M.show()
   end
 end
 
-function M.hide()
-  if not (win_ok(transcript_win) or win_ok(composer_win) or win_ok(editor_win)) then
-    return
-  end
-  if visible() then
-    local cfg = vim.api.nvim_win_get_config(transcript_win)
-    remembered_width = (cfg.width or 0) + BORDER
-  end
-  layout_lock = true
-  local ok, err = pcall(function()
-    local root = root_win()
-    close_win(composer_win)
-    close_win(transcript_win)
-    close_win(editor_win)
-    composer_win = nil
-    transcript_win = nil
-    editor_win = nil
-    if code_buf and vim.api.nvim_buf_is_valid(code_buf) then
-      vim.api.nvim_win_set_buf(root, code_buf)
-    end
-    vim.wo[root].statusline = nil
-    vim.wo[root].fillchars = nil
-    if saved_laststatus ~= nil then
-      vim.o.laststatus = saved_laststatus
-      saved_laststatus = nil
-    end
-    if saved_ruler ~= nil then
-      vim.o.ruler = saved_ruler
-      saved_ruler = nil
-    end
-    vim.api.nvim_set_current_win(root)
-    code_win = root
-  end)
-  layout_lock = false
-  if not ok then
-    error(err)
-  end
-end
+function M.hide() end
 
-function M.toggle()
-  if visible() then
-    M.hide()
-  else
-    M.show()
-    if win_ok(composer_win) then
-      vim.api.nvim_set_current_win(composer_win)
-    end
-  end
-end
+function M.toggle() end
 
 local function ensure_cheatsheet()
   if cheatsheet_buf and vim.api.nvim_buf_is_valid(cheatsheet_buf) then
@@ -526,28 +532,8 @@ function M.open()
   end
 end
 
-function M.grow_current(delta)
-  local cur = vim.api.nvim_get_current_win()
-  if is_cheatsheet_win(cur) then
-    if not visible() then
-      return true
-    end
-    remembered_width = clamp_outer(column_outer() + delta)
-    relayout()
-    relayout_cheatsheet()
-    return true
-  end
-  if not visible() then
-    return false
-  end
-  if is_chat_win(cur) then
-    remembered_width = clamp_outer(column_outer() + delta)
-  else
-    remembered_width = clamp_outer(column_outer() - delta)
-  end
-  relayout()
-  relayout_cheatsheet()
-  return true
+function M.grow_current(_)
+  return visible() or is_cheatsheet_win(vim.api.nvim_get_current_win())
 end
 
 local function scroll_transcript()
@@ -887,16 +873,13 @@ end
 
 function M.setup()
   style()
-  vim.o.showtabline = 2
-  vim.o.tabline = "%!v:lua.require('nvim_ai.ui').tabline()"
+  vim.o.showtabline = 0
   vim.o.winborder = "single"
   vim.o.equalalways = false
   local group = vim.api.nvim_create_augroup("NaiChatLayout", { clear = true })
   vim.api.nvim_create_autocmd("WinEnter", {
     group = group,
-    callback = function()
-      remember_code_win()
-    end,
+    callback = bounce_backdrop,
   })
   vim.api.nvim_create_autocmd("VimResized", {
     group = group,
@@ -907,6 +890,12 @@ function M.setup()
       relayout_cheatsheet()
     end,
   })
+  vim.keymap.set("c", "<CR>", function()
+    if vim.fn.getcmdtype() == ":" and visible() and block_ex(vim.fn.getcmdline()) then
+      return "<C-u><Esc>"
+    end
+    return "<CR>"
+  end, { expr = true, desc = "Block file Ex and :q in Chat-only" })
   vim.keymap.set("n", "<C-w>>", function()
     if not M.grow_current(vim.v.count1) then
       vim.cmd(vim.v.count1 .. "wincmd >")
