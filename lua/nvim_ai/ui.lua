@@ -1,14 +1,15 @@
 local M = {}
 
 local STROKE = "#7aa2f7"
+local CARD_BG = "#1a1b26"
+local CARD_FG = "#c0caf5"
+local LINE_NR = "#3b4261"
 local TOPBAR_BG = "#3d59a1"
 local COLUMN_FRACTION = 0.3
 local COMPOSER_INNER = 6
 local EDGE = 1
-local GAP = 0
+local GAP = 1
 local BORDER = 2
--- Rounded corners, double sides: a bit thicker than ─│, still a line.
-local CARD_BORDER = { "╭", "═", "╮", "║", "╯", "═", "╰", "║" }
 
 local transcript_buf
 local composer_buf
@@ -25,13 +26,16 @@ local saved_laststatus
 local saved_ruler
 
 local function style()
+  vim.opt.termguicolors = true
   vim.api.nvim_set_hl(0, "NaiTopBar", { bg = TOPBAR_BG, fg = "#ffffff" })
   vim.api.nvim_set_hl(0, "TabLine", { bg = TOPBAR_BG, fg = "#ffffff" })
   vim.api.nvim_set_hl(0, "TabLineFill", { bg = TOPBAR_BG, fg = "#c0caf5" })
   vim.api.nvim_set_hl(0, "TabLineSel", { bg = TOPBAR_BG, fg = "#ffffff" })
-  vim.api.nvim_set_hl(0, "NaiStroke", { fg = STROKE, bg = "NONE", bold = true })
-  vim.api.nvim_set_hl(0, "FloatBorder", { fg = STROKE, bg = "NONE", bold = true })
-  vim.api.nvim_set_hl(0, "WinBorder", { fg = STROKE, bg = "NONE", bold = true })
+  vim.api.nvim_set_hl(0, "NaiCard", { fg = CARD_FG, bg = CARD_BG })
+  vim.api.nvim_set_hl(0, "NaiLineNr", { fg = LINE_NR, bg = CARD_BG })
+  vim.api.nvim_set_hl(0, "NaiStroke", { fg = STROKE, bg = CARD_BG, bold = true })
+  vim.api.nvim_set_hl(0, "FloatBorder", { fg = STROKE, bg = CARD_BG, bold = true })
+  vim.api.nvim_set_hl(0, "WinBorder", { fg = STROKE, bg = CARD_BG, bold = true })
 end
 
 local function configure_buf(buf, name)
@@ -96,7 +100,8 @@ local function apply_backdrop(win)
 end
 
 local function apply_card(win, opts)
-  vim.wo[win].winhighlight = "FloatBorder:NaiStroke,WinBorder:NaiStroke,Normal:Normal"
+  vim.wo[win].winhighlight =
+    "Normal:NaiCard,EndOfBuffer:NaiCard,FloatBorder:NaiStroke,WinBorder:NaiStroke,LineNr:NaiLineNr,CursorLineNr:NaiLineNr,SignColumn:NaiCard,FoldColumn:NaiCard"
   vim.wo[win].wrap = true
   if opts.minimal then
     vim.wo[win].number = false
@@ -174,7 +179,7 @@ local function float_opts(rect, extra)
     col = rect.col,
     width = rect.width,
     height = rect.height,
-    border = CARD_BORDER,
+    border = "rounded",
     zindex = 50,
     focusable = true,
   }
