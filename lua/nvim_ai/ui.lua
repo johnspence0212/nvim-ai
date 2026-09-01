@@ -10,13 +10,27 @@ local COMPOSER_INNER = 12
 local EDGE = 1
 local GAP = 1
 local BORDER = 2
+local CHEATSHEET_Z = 60
+local CHEATSHEET_LINES = {
+  "Command cheatsheet",
+  "",
+  "<leader>nn     hide/show Chat",
+  "<leader>nc     cancel (drops pending)",
+  "<leader>nk     this cheatsheet",
+  "Enter          send (one pending while in flight)",
+  "Shift-Enter    newline in Composer",
+  "<C-w>>         grow Chat column",
+  "<C-w><         shrink Chat column",
+}
 
 local transcript_buf
 local composer_buf
 local backdrop_buf
+local cheatsheet_buf
 local transcript_win
 local composer_win
 local editor_win
+local cheatsheet_win
 local code_win
 local code_buf
 local remembered_width
@@ -90,6 +104,10 @@ end
 
 local function is_chat_win(win)
   return win == transcript_win or win == composer_win
+end
+
+local function is_cheatsheet_win(win)
+  return win == cheatsheet_win
 end
 
 local function visible()
@@ -250,7 +268,7 @@ local function remember_code_win()
     return
   end
   local buf = vim.api.nvim_win_get_buf(cur)
-  if buf == backdrop_buf or buf == transcript_buf or buf == composer_buf then
+  if buf == backdrop_buf or buf == transcript_buf or buf == composer_buf or buf == cheatsheet_buf then
     if buf == backdrop_buf and win_ok(editor_win) then
       vim.api.nvim_set_current_win(editor_win)
     end
@@ -264,7 +282,7 @@ end
 local function capture_code()
   local win = vim.api.nvim_get_current_win()
   local buf = vim.api.nvim_win_get_buf(win)
-  if buf ~= transcript_buf and buf ~= composer_buf and buf ~= backdrop_buf then
+  if buf ~= transcript_buf and buf ~= composer_buf and buf ~= backdrop_buf and buf ~= cheatsheet_buf then
     code_buf = buf
     if vim.api.nvim_win_get_config(win).relative == "" then
       code_win = win
@@ -273,7 +291,7 @@ local function capture_code()
   end
   local root = root_win()
   local root_buf = vim.api.nvim_win_get_buf(root)
-  if root_buf ~= backdrop_buf and root_buf ~= transcript_buf and root_buf ~= composer_buf then
+  if root_buf ~= backdrop_buf and root_buf ~= transcript_buf and root_buf ~= composer_buf and root_buf ~= cheatsheet_buf then
     code_buf = root_buf
     code_win = root
   end
@@ -379,6 +397,72 @@ function M.toggle()
   end
 end
 
+local function ensure_cheatsheet()
+  if cheatsheet_buf and vim.api.nvim_buf_is_valid(cheatsheet_buf) then
+    return
+  end
+  cheatsheet_buf = vim.api.nvim_create_buf(false, true)
+  configure_buf(cheatsheet_buf, "nai://cheatsheet")
+  vim.bo[cheatsheet_buf].modifiable = true
+  vim.api.nvim_buf_set_lines(cheatsheet_buf, 0, -1, false, CHEATSHEET_LINES)
+  vim.bo[cheatsheet_buf].modifiable = false
+  vim.keymap.set("n", "<Esc>", function()
+    M.hide_cheatsheet()
+  end, { buffer = cheatsheet_buf, desc = "Close command cheatsheet" })
+end
+
+local function cheatsheet_rect()
+  local inner_w = 1
+  for _, line in ipairs(CHEATSHEET_LINES) do
+    inner_w = math.max(inner_w, vim.fn.strdisplaywidth(line))
+  end
+  inner_w = inner_w + 2
+  local inner_h = #CHEATSHEET_LINES
+  local outer_w = inner_w + BORDER
+  local outer_h = inner_h + BORDER
+  local tab = vim.o.showtabline == 0 and 0 or 1
+  local cmd = vim.o.cmdheight
+  local grid_top = tab
+  local grid_h = math.max(outer_h, vim.o.lines - 1 - cmd - grid_top + 1)
+  local r = grid_top + math.max(0, math.floor((grid_h - outer_h) / 2))
+  local c = math.max(0, math.floor((vim.o.columns - outer_w) / 2))
+  return outer_to_nvim({ r = r, c = c, w = outer_w, h = outer_h })
+end
+
+local function relayout_cheatsheet()
+  if not win_ok(cheatsheet_win) then
+    return
+  end
+  place(cheatsheet_win, cheatsheet_buf, cheatsheet_rect(), { zindex = CHEATSHEET_Z }, false)
+end
+
+function M.hide_cheatsheet()
+  if not win_ok(cheatsheet_win) then
+    cheatsheet_win = nil
+    return
+  end
+  close_win(cheatsheet_win)
+  cheatsheet_win = nil
+end
+
+function M.show_cheatsheet()
+  style()
+  ensure_cheatsheet()
+  cheatsheet_win = place(cheatsheet_win, cheatsheet_buf, cheatsheet_rect(), { zindex = CHEATSHEET_Z }, true)
+  apply_card(cheatsheet_win, { minimal = true })
+  vim.wo[cheatsheet_win].wrap = false
+  vim.wo[cheatsheet_win].cursorline = false
+  vim.api.nvim_set_current_win(cheatsheet_win)
+end
+
+function M.toggle_cheatsheet()
+  if win_ok(cheatsheet_win) then
+    M.hide_cheatsheet()
+  else
+    M.show_cheatsheet()
+  end
+end
+
 function M.open()
   M.show()
   if win_ok(transcript_win) then
@@ -387,16 +471,26 @@ function M.open()
 end
 
 function M.grow_current(delta)
+  local cur = vim.api.nvim_get_current_win()
+  if is_cheatsheet_win(cur) then
+    if not visible() then
+      return true
+    end
+    remembered_width = clamp_outer(column_outer() + delta)
+    relayout()
+    relayout_cheatsheet()
+    return true
+  end
   if not visible() then
     return false
   end
-  local cur = vim.api.nvim_get_current_win()
   if is_chat_win(cur) then
     remembered_width = clamp_outer(column_outer() + delta)
   else
     remembered_width = clamp_outer(column_outer() - delta)
   end
   relayout()
+  relayout_cheatsheet()
   return true
 end
 
@@ -555,6 +649,7 @@ function M.setup()
       if visible() then
         relayout()
       end
+      relayout_cheatsheet()
     end,
   })
   vim.keymap.set("n", "<C-w>>", function()
