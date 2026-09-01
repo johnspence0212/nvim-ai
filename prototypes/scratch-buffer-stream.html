@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>PROTOTYPE — :Nai scratch buffer stream</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      font: 14px/1.45 ui-monospace, "Cascadia Code", Consolas, monospace;
+      background: #1c1c1c;
+      color: #d4d4d4;
+    }
+    /* Three variants of :Nai scratch-buffer streaming, switchable via ?variant= */
+    .frame {
+      height: calc(100% - 56px);
+      display: flex;
+      flex-direction: column;
+      padding: 12px 16px 8px;
+    }
+    .bufname { color: #808080; font-size: 12px; margin-bottom: 8px; }
+    .buffer { flex: 1; overflow: auto; white-space: pre-wrap; }
+    .statusline {
+      font-size: 12px;
+      padding: 4px 8px;
+      background: #303030;
+      color: #e0e0e0;
+    }
+    .role { color: #7aa2f7; }
+    .role-agent { color: #9ece6a; }
+    .muted { color: #6a6a6a; }
+    .cursor { display: inline-block; width: 0.55em; background: #d4d4d4; animation: blink 1s step-end infinite; }
+    @keyframes blink { 50% { background: transparent; } }
+    .switcher {
+      position: fixed;
+      left: 50%;
+      bottom: 12px;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      background: #f4f4f4;
+      color: #111;
+      padding: 8px 12px;
+      border-radius: 999px;
+      box-shadow: 0 4px 18px rgba(0,0,0,.4);
+      z-index: 10;
+    }
+    .switcher button {
+      font: inherit;
+      border: 0;
+      background: #111;
+      color: #fff;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      cursor: pointer;
+    }
+    .switcher .replay {
+      width: auto;
+      padding: 0 10px;
+      border-radius: 999px;
+      background: #333;
+    }
+    .header-block { border-bottom: 1px solid #3a3a3a; padding-bottom: 8px; margin-bottom: 8px; }
+    .prompt-line { color: #c0c0c0; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <div class="switcher">
+    <button type="button" id="prev" aria-label="Previous variant">←</button>
+    <span id="label"></span>
+    <button type="button" id="next" aria-label="Next variant">→</button>
+    <button type="button" class="replay" id="replay">Replay stream</button>
+  </div>
+  <script>
+    const VARIANTS = [
+      { key: "A", name: "Transcript turns" },
+      { key: "B", name: "Raw append" },
+      { key: "C", name: "Status + prompt header" },
+    ];
+    const PROMPT = "How does session/prompt stream into a scratch buffer?";
+    const REPLY = "Chunks arrive as session/update agent_message_chunk. The Profile appends each text fragment. The turn ends when session/prompt returns stopReason end_turn.";
+
+    function currentKey() {
+      const v = new URLSearchParams(location.search).get("variant") || "A";
+      return VARIANTS.some((x) => x.key === v) ? v : "A";
+    }
+    function setKey(key) {
+      const url = new URL(location.href);
+      url.searchParams.set("variant", key);
+      history.replaceState(null, "", url);
+      render();
+    }
+    function cycle(delta) {
+      const i = VARIANTS.findIndex((x) => x.key === currentKey());
+      setKey(VARIANTS[(i + delta + VARIANTS.length) % VARIANTS.length].key);
+    }
+
+    let timer = null;
+    let shown = "";
+    let done = false;
+
+    function chunkify(text) {
+      return text.split(/(\s+)/).filter(Boolean);
+    }
+
+    function startStream() {
+      clearInterval(timer);
+      shown = "";
+      done = false;
+      const chunks = chunkify(REPLY);
+      let i = 0;
+      paint();
+      timer = setInterval(() => {
+        if (i >= chunks.length) {
+          done = true;
+          clearInterval(timer);
+          paint();
+          return;
+        }
+        shown += chunks[i++];
+        paint();
+      }, 70);
+    }
+
+    function paint() {
+      const key = currentKey();
+      const root = document.getElementById("root");
+      const cursor = done ? "" : '<span class="cursor"></span>';
+      const state = `variant=${key} streaming=${!done} chars=${shown.length}`;
+
+      if (key === "A") {
+        root.innerHTML = `
+          <div class="frame">
+            <div class="bufname">[prototype] nai://scratch</div>
+            <div class="buffer">
+<span class="role">You</span>
+${PROMPT}
+
+<span class="role-agent">Agent</span>
+${shown}${cursor}
+            </div>
+            <div class="statusline">${state}</div>
+          </div>`;
+      } else if (key === "B") {
+        root.innerHTML = `
+          <div class="frame">
+            <div class="bufname">[prototype] [No Name] [Scratch]</div>
+            <div class="buffer">${shown}${cursor}</div>
+            <div class="statusline">${state}</div>
+          </div>`;
+      } else {
+        root.innerHTML = `
+          <div class="frame">
+            <div class="bufname">[prototype] nai scratch</div>
+            <div class="header-block">
+              <div class="muted">${done ? "done  stopReason=end_turn" : "streaming…"}</div>
+              <div class="prompt-line">:Nai  ${PROMPT}</div>
+            </div>
+            <div class="buffer">${shown}${cursor}</div>
+            <div class="statusline">${state}</div>
+          </div>`;
+      }
+      const meta = VARIANTS.find((x) => x.key === key);
+      document.getElementById("label").textContent = `${meta.key} (${meta.name})`;
+    }
+
+    function render() {
+      startStream();
+    }
+
+    document.getElementById("prev").onclick = () => cycle(-1);
+    document.getElementById("next").onclick = () => cycle(1);
+    document.getElementById("replay").onclick = () => startStream();
+    document.addEventListener("keydown", (e) => {
+      const t = e.target;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      if (e.key === "ArrowLeft") cycle(-1);
+      if (e.key === "ArrowRight") cycle(1);
+    });
+
+    render();
+  </script>
+</body>
+</html>
