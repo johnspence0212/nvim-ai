@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>PROTOTYPE — Chat-only frame</title>
+  <!--
+    Three Chat-only frames (Code closed), switchable via ?variant=.
+    A: full-bleed Chat. B: letterboxed column. C: Composer-first.
+    Turn chrome locked. Throwaway. No ACP.
+  -->
+  <style>
+    :root {
+      --bg: #1a1b26;
+      --fg: #c0caf5;
+      --muted: #565f89;
+      --you: #7aa2f7;
+      --pending: #e0af68;
+      --border: #3b4261;
+      --stroke: 2px solid #7aa2f7;
+      --fence: #16161e;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: #0f0f14; color: var(--fg); font-family: ui-monospace, "IBM Plex Mono", "JetBrains Mono", Menlo, monospace; }
+    body { display: flex; flex-direction: column; }
+    .frame { flex: 1; display: flex; flex-direction: column; min-height: 0; margin: 12px 12px 64px; background: #0b0c12; }
+    .topbar {
+      flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between;
+      gap: 16px; background: #3d59a1; color: #fff; padding: 3px 12px; font-size: 11px; min-height: 26px;
+    }
+    .topbar-cmds { display: flex; flex-wrap: wrap; gap: 4px 2px; }
+    .topbar-info { color: #c0caf5; white-space: nowrap; }
+    .topbar kbd { font: inherit; opacity: 0.85; }
+    .workspace { flex: 1; display: flex; min-height: 0; }
+    .panel {
+      border-radius: 0; overflow: hidden; background: #1a1b26; border: var(--stroke);
+      display: flex; flex-direction: column; min-height: 0;
+    }
+    .winbar { color: var(--muted); font-size: 11px; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+    .winbar strong { color: var(--fg); font-weight: 600; }
+    .footbar { color: var(--muted); font-size: 11px; padding: 4px 8px; border-top: 1px solid var(--border); }
+    .transcript { flex: 1; overflow: auto; padding: 12px 16px; min-height: 0; }
+    .composer-input {
+      margin: 0; width: 100%; border: 0; outline: none; resize: none;
+      background: #16161e; color: var(--fg); font: inherit; padding: 10px 12px; min-height: 4.5em;
+    }
+    .composer-input:focus { outline: 1px solid var(--you); outline-offset: -1px; }
+    .turn { margin: 0 0 14px; }
+    .you { display: flex; align-items: flex-start; gap: 10px; }
+    .rail { flex: 0 0 4px; width: 4px; min-height: 1.4em; align-self: stretch; background: var(--you); }
+    .you-body { min-width: 0; }
+    .you-tag { color: var(--you); font-size: 11px; letter-spacing: 0.06em; margin-bottom: 2px; }
+    .agent { line-height: 1.5; }
+    .agent p { margin: 0 0 0.5em; }
+    .thinking { color: var(--muted); font-style: italic; font-size: 12px; padding: 6px 0; }
+    .queued { display: flex; align-items: flex-start; gap: 10px; }
+    .queued .rail { background: var(--pending); }
+    .queued-tag { color: var(--pending); font-size: 11px; letter-spacing: 0.06em; }
+    .variant-banner {
+      position: sticky; top: 0; z-index: 2; font: 600 11px ui-monospace, monospace;
+      padding: 6px 8px; margin: -12px -16px 12px; letter-spacing: 0.02em;
+    }
+    .state-dump {
+      position: fixed; bottom: 64px; left: 12px; width: 280px; max-height: 36%;
+      background: #0b0c12; border: 1px dashed var(--pending); color: var(--pending);
+      font-size: 11px; padding: 8px; overflow: auto; white-space: pre; z-index: 5;
+    }
+    .switcher {
+      position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+      display: flex; align-items: center; gap: 10px; background: #f6f6f0; color: #111;
+      border-radius: 999px; padding: 8px 14px; box-shadow: 0 8px 24px #0008; z-index: 10;
+      font: 13px ui-sans-serif, system-ui, sans-serif;
+    }
+    .switcher button { border: 0; background: #111; color: #f6f6f0; width: 28px; height: 28px; border-radius: 50%; cursor: pointer; font-size: 16px; }
+    .switcher .label { min-width: 380px; text-align: center; font-weight: 600; }
+
+    /* A — Chat is the window. Transcript fills. Composer is a bottom strip. */
+    .var-a .workspace { padding: 8px; }
+    .var-a .chat { flex: 1; display: flex; flex-direction: column; min-height: 0; gap: 8px; }
+    .var-a .transcript-panel { flex: 1; }
+    .var-a .composer-panel { flex: 0 0 auto; }
+    .var-a .variant-banner { background: #16161e; color: var(--you); border-bottom: 2px solid var(--you); }
+
+    /* B — Letterbox. Chat is a centered column. Margins are empty frame. */
+    .var-b .workspace { justify-content: center; padding: 16px 0 20px; }
+    .var-b .chat {
+      width: min(560px, 72%); display: flex; flex-direction: column; min-height: 0; gap: 8px;
+    }
+    .var-b .transcript-panel { flex: 1; }
+    .var-b .composer-panel { flex: 0 0 auto; }
+    .var-b .variant-banner { background: #3d59a1; color: #fff; }
+
+    /* C — Composer-first. Input is the hero. Transcript is a short log. */
+    .var-c .workspace { padding: 8px; }
+    .var-c .chat { flex: 1; display: flex; flex-direction: column; min-height: 0; gap: 8px; }
+    .var-c .transcript-panel { flex: 0 1 38%; max-height: 42%; }
+    .var-c .composer-panel { flex: 1; }
+    .var-c .composer-input { min-height: 0; flex: 1; font-size: 16px; padding: 16px; }
+    .var-c .variant-banner { background: #16161e; color: var(--pending); border-bottom: 2px solid var(--pending); }
+  </style>
+</head>
+<body>
+  <pre class="state-dump" id="stateDump"></pre>
+  <div class="frame">
+    <div class="topbar">
+      <div class="topbar-cmds">
+        <span><kbd>&lt;leader&gt;nn</kbd> reserved</span>
+        <span><kbd>&lt;leader&gt;nc</kbd> Code</span>
+        <span><kbd>&lt;leader&gt;nx</kbd> Chat-only</span>
+        <span><kbd>&lt;leader&gt;nq</kbd> cancel</span>
+        <span><kbd>&lt;leader&gt;nk</kbd> cheatsheet</span>
+      </div>
+      <div class="topbar-info">Session · idle · Code closed</div>
+    </div>
+    <div class="workspace" id="workspace"></div>
+  </div>
+  <div class="switcher">
+    <button type="button" id="prev" aria-label="previous variant">←</button>
+    <div class="label" id="switchLabel"></div>
+    <button type="button" id="next" aria-label="next variant">→</button>
+  </div>
+  <script>
+    const VARIANTS = {
+      A: "Full-bleed Chat · transcript fills",
+      B: "Letterbox · Chat is a centered column",
+      C: "Composer-first · input is the hero",
+    };
+    const KEYS = Object.keys(VARIANTS);
+    const params = new URLSearchParams(location.search);
+    let variant = (params.get("variant") || "A").toUpperCase();
+    if (!VARIANTS[variant]) variant = "A";
+
+    const banners = {
+      A: "A · one column · Chat is the whole frame",
+      B: "B · one column · Chat sits in a letterbox",
+      C: "C · one column · Composer takes the frame",
+    };
+
+    function seedHtml() {
+      return `
+        <div class="variant-banner">${banners[variant]}</div>
+        <div class="turn">
+          <div class="you"><div class="rail"></div><div class="you-body"><div class="you-tag">YOU</div>hello world in C?</div></div>
+        </div>
+        <div class="turn"><div class="agent"><p>Here's a minimal C hello world. Save it as hello.c.</p></div></div>
+        <div class="turn">
+          <div class="you"><div class="rail"></div><div class="you-body"><div class="you-tag">YOU</div>add comments</div></div>
+        </div>
+        <div class="turn"><div class="thinking">thinking...</div></div>
+        <div class="turn">
+          <div class="queued"><div class="rail"></div><div><div class="queued-tag">QUEUED</div>also a Makefile</div></div>
+        </div>`;
+    }
+
+    function composerHtml() {
+      const tall = variant === "C";
+      return `
+        <div class="winbar"><strong>Composer</strong> · focused on launch</div>
+        <textarea class="composer-input" id="composer" placeholder="Just start typing…">${tall ? "" : ""}</textarea>
+        <div class="footbar">Enter send · Shift-Enter newline</div>`;
+    }
+
+    function render() {
+      document.body.className = "var-" + variant.toLowerCase();
+      document.getElementById("switchLabel").textContent = variant + " (" + VARIANTS[variant] + ")";
+      document.getElementById("workspace").innerHTML = `
+        <div class="chat">
+          <div class="panel transcript-panel">
+            <div class="winbar"><strong>Chat</strong> · Code closed</div>
+            <div class="transcript">${seedHtml()}</div>
+          </div>
+          <div class="panel composer-panel">${composerHtml()}</div>
+        </div>`;
+      const ta = document.getElementById("composer");
+      ta.focus();
+      document.getElementById("stateDump").textContent =
+        "PROTOTYPE STATE\n" + JSON.stringify({
+          variant,
+          layout: VARIANTS[variant],
+          code: "closed",
+          focus: "composer",
+          column: "one",
+        }, null, 2);
+    }
+
+    function setVariant(next) {
+      variant = next;
+      const url = new URL(location.href);
+      url.searchParams.set("variant", variant);
+      history.replaceState(null, "", url);
+      render();
+    }
+    function cycle(dir) {
+      const i = KEYS.indexOf(variant);
+      setVariant(KEYS[(i + dir + KEYS.length) % KEYS.length]);
+    }
+    document.getElementById("prev").onclick = () => cycle(-1);
+    document.getElementById("next").onclick = () => cycle(1);
+    document.addEventListener("keydown", (e) => {
+      const tag = e.target.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || e.target.isContentEditable) return;
+      if (e.key === "ArrowLeft") cycle(-1);
+      if (e.key === "ArrowRight") cycle(1);
+    });
+    render();
+  </script>
+</body>
+</html>
