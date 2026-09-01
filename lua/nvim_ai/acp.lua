@@ -8,23 +8,31 @@ local stdout_rest = ""
 local inflight = false
 local cbs = nil
 
+local cancelled = false
+
 local function notify_error(msg)
   local current = cbs
-  inflight = false
   cbs = nil
   if current and current.on_error then
     vim.schedule(function()
+      inflight = false
       current.on_error(msg)
     end)
+  else
+    inflight = false
   end
 end
 
 local function notify_done()
   local current = cbs
-  inflight = false
   cbs = nil
   if current and current.on_done then
-    vim.schedule(current.on_done)
+    vim.schedule(function()
+      inflight = false
+      current.on_done()
+    end)
+  else
+    inflight = false
   end
 end
 
@@ -242,11 +250,16 @@ function M.prompt(text, callbacks)
   if inflight then
     return false
   end
+  cancelled = false
   inflight = true
   cbs = callbacks
   ensure_session(function(err)
     if err then
       notify_error(err)
+      return
+    end
+    if cancelled then
+      notify_done()
       return
     end
     request("session/prompt", {
@@ -264,6 +277,7 @@ function M.prompt(text, callbacks)
 end
 
 function M.cancel()
+  cancelled = true
   if not inflight or not session_id then
     return
   end

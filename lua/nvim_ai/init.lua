@@ -3,13 +3,74 @@ local ui = require("nvim_ai.ui")
 
 local M = {}
 
+local pending_text
+
 ui.setup()
+
+local send_turn
+
+local function finish_turn()
+  local queued = pending_text
+  pending_text = nil
+  ui.drop_pending()
+  if queued and queued ~= "" then
+    send_turn(queued)
+  else
+    ui.set_session_slot("idle")
+  end
+end
+
+send_turn = function(text)
+  ui.start_turn(text)
+  ui.set_session_slot("in flight")
+  backend.prompt(text, {
+    on_chunk = function(chunk)
+      ui.append_agent(chunk)
+    end,
+    on_done = finish_turn,
+    on_error = function(msg)
+      vim.notify("Chat: " .. msg, vim.log.levels.ERROR)
+      finish_turn()
+    end,
+  })
+end
+
+function M.send()
+  local text = ui.composer_text()
+  if text == "" then
+    return
+  end
+  if backend.is_inflight() then
+    pending_text = text
+    ui.set_pending(text)
+    ui.clear_composer()
+    ui.set_session_slot("pending")
+    return
+  end
+  ui.clear_composer()
+  send_turn(text)
+end
+
+function M.cancel()
+  pending_text = nil
+  ui.drop_pending()
+  backend.cancel()
+  if backend.is_inflight() then
+    ui.set_session_slot("in flight")
+  else
+    ui.set_session_slot("idle")
+  end
+end
+
+ui.bind_send(M.send)
 
 vim.keymap.set("n", "<leader>nn", function()
   ui.toggle()
 end, { desc = "Chat hide/show" })
 
-vim.keymap.set("n", "<leader>nc", function() end, { desc = "Chat cancel" })
+vim.keymap.set("n", "<leader>nc", function()
+  M.cancel()
+end, { desc = "Chat cancel" })
 
 vim.keymap.set("n", "<leader>nk", function() end, { desc = "Chat command cheatsheet" })
 
@@ -19,42 +80,5 @@ vim.api.nvim_create_autocmd("VimEnter", {
     ui.show()
   end,
 })
-
-function M.nai(args)
-  if backend.is_inflight() then
-    vim.notify("Nai: a turn is already in flight", vim.log.levels.ERROR)
-    return
-  end
-  local text = args
-  if not text or text == "" then
-    text = vim.fn.input("Nai: ")
-  end
-  if text == "" then
-    return
-  end
-  ui.open()
-  ui.start_turn(text)
-  backend.prompt(text, {
-    on_chunk = function(chunk)
-      ui.append_agent(chunk)
-    end,
-    on_done = function() end,
-    on_error = function(msg)
-      vim.notify("Nai: " .. msg, vim.log.levels.ERROR)
-    end,
-  })
-end
-
-function M.cancel()
-  backend.cancel()
-end
-
-vim.api.nvim_create_user_command("Nai", function(opts)
-  M.nai(opts.args)
-end, { nargs = "*" })
-
-vim.api.nvim_create_user_command("NaiCancel", function()
-  M.cancel()
-end, {})
 
 return M

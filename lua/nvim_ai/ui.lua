@@ -24,6 +24,12 @@ local session_slot = "idle"
 local layout_lock = false
 local saved_laststatus
 local saved_ruler
+local on_send
+local pending_start
+local pending_len
+local stream_row
+local composer_maps_buf
+local wire_composer
 
 local function style()
   vim.opt.termguicolors = true
@@ -55,11 +61,27 @@ local function ensure_bufs()
   if not (composer_buf and vim.api.nvim_buf_is_valid(composer_buf)) then
     composer_buf = vim.api.nvim_create_buf(false, true)
     configure_buf(composer_buf, "nai://composer")
+    wire_composer()
   end
   if not (backdrop_buf and vim.api.nvim_buf_is_valid(backdrop_buf)) then
     backdrop_buf = vim.api.nvim_create_buf(false, true)
     configure_buf(backdrop_buf, "nai://backdrop")
   end
+end
+
+wire_composer = function()
+  if not composer_buf or composer_maps_buf == composer_buf then
+    return
+  end
+  composer_maps_buf = composer_buf
+  local function send()
+    if on_send then
+      on_send()
+    end
+  end
+  vim.keymap.set("i", "<CR>", send, { buffer = composer_buf, desc = "Send from Composer" })
+  vim.keymap.set("i", "<S-CR>", "<C-j>", { buffer = composer_buf, desc = "Newline in Composer" })
+  vim.keymap.set("n", "<CR>", send, { buffer = composer_buf, desc = "Send from Composer" })
 end
 
 local function win_ok(win)
@@ -378,32 +400,136 @@ function M.grow_current(delta)
   return true
 end
 
-function M.start_turn(prompt)
+local function scroll_transcript()
+  if win_ok(transcript_win) then
+    pcall(vim.api.nvim_win_set_cursor, transcript_win, { vim.api.nvim_buf_line_count(transcript_buf), 0 })
+  end
+end
+
+function M.start_turn(text)
   ensure_bufs()
   vim.bo[transcript_buf].modifiable = true
   local lines = vim.api.nvim_buf_get_lines(transcript_buf, 0, -1, false)
   local empty = #lines == 1 and lines[1] == ""
-  local block = { "You", prompt, "", "Agent", "" }
+  local body = vim.split(text, "\n", { plain = true })
+  if #body == 0 then
+    body = { "" }
+  end
+  local block = { "You" }
+  for _, line in ipairs(body) do
+    block[#block + 1] = line
+  end
+  block[#block + 1] = ""
+  block[#block + 1] = "Agent"
+  block[#block + 1] = ""
   if empty then
     vim.api.nvim_buf_set_lines(transcript_buf, 0, -1, false, block)
+    stream_row = #block - 1
   else
+    local count = vim.api.nvim_buf_line_count(transcript_buf)
     local appended = { "" }
     for _, line in ipairs(block) do
       appended[#appended + 1] = line
     end
     vim.api.nvim_buf_set_lines(transcript_buf, -1, -1, false, appended)
+    stream_row = count + #appended - 1
   end
   vim.bo[transcript_buf].modifiable = false
+  scroll_transcript()
 end
 
 function M.append_agent(chunk)
   ensure_bufs()
+  if not stream_row then
+    stream_row = vim.api.nvim_buf_line_count(transcript_buf) - 1
+  end
   vim.bo[transcript_buf].modifiable = true
-  local last = vim.api.nvim_buf_line_count(transcript_buf) - 1
-  local line = vim.api.nvim_buf_get_lines(transcript_buf, last, last + 1, false)[1] or ""
+  local line = vim.api.nvim_buf_get_lines(transcript_buf, stream_row, stream_row + 1, false)[1] or ""
   local parts = vim.split(line .. chunk, "\n", { plain = true })
-  vim.api.nvim_buf_set_lines(transcript_buf, last, last + 1, false, parts)
+  vim.api.nvim_buf_set_lines(transcript_buf, stream_row, stream_row + 1, false, parts)
+  local extra = #parts - 1
+  if extra > 0 and pending_start then
+    pending_start = pending_start + extra
+  end
+  stream_row = stream_row + extra
   vim.bo[transcript_buf].modifiable = false
+  scroll_transcript()
+end
+
+function M.set_session_slot(slot)
+  session_slot = slot
+  pcall(vim.cmd, "redrawtabline")
+end
+
+function M.set_pending(text)
+  ensure_bufs()
+  local body = vim.split(text, "\n", { plain = true })
+  if #body == 0 then
+    body = { "" }
+  end
+  local block = { "Pending" }
+  for _, line in ipairs(body) do
+    block[#block + 1] = line
+  end
+  vim.bo[transcript_buf].modifiable = true
+  if pending_start then
+    vim.api.nvim_buf_set_lines(transcript_buf, pending_start, pending_start + pending_len, false, block)
+  else
+    local count = vim.api.nvim_buf_line_count(transcript_buf)
+    local lines = vim.api.nvim_buf_get_lines(transcript_buf, 0, -1, false)
+    local empty = count == 1 and lines[1] == ""
+    if empty then
+      vim.api.nvim_buf_set_lines(transcript_buf, 0, -1, false, block)
+      pending_start = 0
+    else
+      local prefixed = { "" }
+      for _, line in ipairs(block) do
+        prefixed[#prefixed + 1] = line
+      end
+      vim.api.nvim_buf_set_lines(transcript_buf, -1, -1, false, prefixed)
+      pending_start = count + 1
+    end
+  end
+  pending_len = #block
+  vim.bo[transcript_buf].modifiable = false
+  scroll_transcript()
+end
+
+function M.drop_pending()
+  if not pending_start or not transcript_buf or not vim.api.nvim_buf_is_valid(transcript_buf) then
+    pending_start = nil
+    pending_len = nil
+    return
+  end
+  vim.bo[transcript_buf].modifiable = true
+  local start = pending_start
+  if start > 0 then
+    local prev = vim.api.nvim_buf_get_lines(transcript_buf, start - 1, start, false)[1]
+    if prev == "" then
+      start = start - 1
+    end
+  end
+  vim.api.nvim_buf_set_lines(transcript_buf, start, pending_start + pending_len, false, {})
+  vim.bo[transcript_buf].modifiable = false
+  pending_start = nil
+  pending_len = nil
+end
+
+function M.composer_text()
+  ensure_bufs()
+  local lines = vim.api.nvim_buf_get_lines(composer_buf, 0, -1, false)
+  local text = table.concat(lines, "\n")
+  text = text:gsub("^%s+", ""):gsub("%s+$", "")
+  return text
+end
+
+function M.clear_composer()
+  ensure_bufs()
+  vim.api.nvim_buf_set_lines(composer_buf, 0, -1, false, { "" })
+end
+
+function M.bind_send(fn)
+  on_send = fn
 end
 
 function M.bufnr()
