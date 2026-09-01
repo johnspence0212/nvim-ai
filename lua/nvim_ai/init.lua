@@ -72,7 +72,9 @@ vim.keymap.set("n", "<leader>nc", function()
   M.cancel()
 end, { desc = "Chat cancel" })
 
-vim.keymap.set("n", "<leader>nk", function() end, { desc = "Chat command cheatsheet" })
+vim.keymap.set("n", "<leader>nk", function()
+  ui.toggle_cheatsheet()
+end, { desc = "Chat command cheatsheet" })
 
 vim.api.nvim_create_autocmd("VimEnter", {
   group = vim.api.nvim_create_augroup("NaiChat", { clear = true }),
