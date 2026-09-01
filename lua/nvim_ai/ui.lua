@@ -6,6 +6,9 @@ local STROKE = "#7aa2f7"
 local CARD_BG = "#1a1b26"
 local CARD_FG = "#c0caf5"
 local LINE_NR = "#3b4261"
+local YOU = "#7aa2f7"
+local QUEUED = "#e0af68"
+local MUTED = "#565f89"
 local TOPBAR_BG = "#3d59a1"
 local COLUMN_FRACTION = 0.3
 local COMPOSER_INNER = 12
@@ -47,6 +50,10 @@ local stream_row
 local agent_start
 local agent_plain
 local md_ns
+local turn_ns
+local pending_ns
+local thinking_ns
+local thinking
 local composer_maps_buf
 local wire_composer
 
@@ -67,6 +74,14 @@ local function style()
   vim.api.nvim_set_hl(0, "NaiMdCode", { fg = "#9ece6a", bg = "#292e42" })
   vim.api.nvim_set_hl(0, "NaiMdFence", { fg = "#9ece6a", bg = "#292e42" })
   vim.api.nvim_set_hl(0, "NaiMdList", { fg = STROKE, bg = CARD_BG })
+  vim.api.nvim_set_hl(0, "NaiYouRail", { fg = YOU, bg = YOU })
+  vim.api.nvim_set_hl(0, "NaiYouTag", { fg = YOU, bg = CARD_BG })
+  vim.api.nvim_set_hl(0, "NaiQueuedRail", { fg = QUEUED, bg = QUEUED })
+  vim.api.nvim_set_hl(0, "NaiQueued", { fg = QUEUED, bg = CARD_BG })
+  vim.api.nvim_set_hl(0, "NaiThinking", { fg = MUTED, bg = CARD_BG, italic = true })
+  vim.api.nvim_set_hl(0, "NaiWinBar", { fg = MUTED, bg = CARD_BG })
+  vim.api.nvim_set_hl(0, "FloatTitle", { fg = CARD_FG, bg = CARD_BG, bold = true })
+  vim.api.nvim_set_hl(0, "FloatFooter", { fg = MUTED, bg = CARD_BG })
 end
 
 local function configure_buf(buf, name)
@@ -152,7 +167,7 @@ end
 
 local function apply_card(win, opts)
   vim.wo[win].winhighlight =
-    "Normal:NaiCard,EndOfBuffer:NaiCard,FloatBorder:NaiStroke,WinBorder:NaiStroke,LineNr:NaiLineNr,CursorLineNr:NaiLineNr,SignColumn:NaiCard,FoldColumn:NaiCard"
+    "Normal:NaiCard,EndOfBuffer:NaiCard,FloatBorder:NaiStroke,WinBorder:NaiStroke,LineNr:NaiLineNr,CursorLineNr:NaiLineNr,SignColumn:NaiCard,FoldColumn:NaiCard,StatusColumn:NaiCard,WinBar:NaiCard,WinBarNC:NaiCard,FloatTitle:NaiWinBar,FloatFooter:NaiWinBar"
   vim.wo[win].wrap = true
   if opts.minimal then
     vim.wo[win].number = false
@@ -161,7 +176,27 @@ local function apply_card(win, opts)
     vim.wo[win].foldcolumn = "0"
     vim.wo[win].statusline = " "
   end
+  if opts.pad then
+    vim.wo[win].statuscolumn = "  "
+    vim.wo[win].winbar = "%#NaiCard# "
+  end
 end
+
+local TRANSCRIPT_FLOAT = {
+  style = "minimal",
+  title = " Chat ",
+  title_pos = "left",
+  footer = " ",
+  footer_pos = "left",
+}
+
+local COMPOSER_FLOAT = {
+  style = "minimal",
+  title = " Composer ",
+  title_pos = "left",
+  footer = " Enter send ",
+  footer_pos = "left",
+}
 
 local function column_outer()
   if remembered_width then
@@ -230,7 +265,7 @@ local function float_opts(rect, extra)
     col = rect.col,
     width = rect.width,
     height = rect.height,
-    border = "rounded",
+    border = "single",
     zindex = 50,
     focusable = true,
   }
@@ -245,7 +280,7 @@ end
 local function place(win, buf, rect, extra, enter)
   local opts = float_opts(rect, extra)
   if win_ok(win) then
-    vim.api.nvim_win_set_config(win, {
+    local cfg = {
       relative = opts.relative,
       row = opts.row,
       col = opts.col,
@@ -253,7 +288,16 @@ local function place(win, buf, rect, extra, enter)
       height = opts.height,
       border = opts.border,
       zindex = opts.zindex,
-    })
+    }
+    if opts.title then
+      cfg.title = opts.title
+      cfg.title_pos = opts.title_pos or "left"
+    end
+    if opts.footer then
+      cfg.footer = opts.footer
+      cfg.footer_pos = opts.footer_pos or "left"
+    end
+    vim.api.nvim_win_set_config(win, cfg)
     return win
   end
   return vim.api.nvim_open_win(buf, enter, opts)
@@ -266,8 +310,8 @@ local function relayout()
   local rects = layout_rects()
   remembered_width = rects.chat_outer
   place(editor_win, code_buf, rects.editor, nil, false)
-  place(transcript_win, transcript_buf, rects.transcript, { style = "minimal" }, false)
-  place(composer_win, composer_buf, rects.composer, { style = "minimal" }, false)
+  place(transcript_win, transcript_buf, rects.transcript, TRANSCRIPT_FLOAT, false)
+  place(composer_win, composer_buf, rects.composer, COMPOSER_FLOAT, false)
 end
 
 local function remember_code_win()
@@ -344,10 +388,11 @@ function M.show()
     remembered_width = rects.chat_outer
     editor_win = place(editor_win, code_buf, rects.editor, nil, false)
     apply_card(editor_win, { minimal = false })
-    transcript_win = place(transcript_win, transcript_buf, rects.transcript, { style = "minimal" }, false)
-    apply_card(transcript_win, { minimal = true })
-    composer_win = place(composer_win, composer_buf, rects.composer, { style = "minimal" }, false)
-    apply_card(composer_win, { minimal = true })
+    transcript_win = place(transcript_win, transcript_buf, rects.transcript, TRANSCRIPT_FLOAT, false)
+    apply_card(transcript_win, { minimal = true, pad = true })
+    vim.wo[transcript_win].breakindent = true
+    composer_win = place(composer_win, composer_buf, rects.composer, COMPOSER_FLOAT, false)
+    apply_card(composer_win, { minimal = true, pad = true })
 
     vim.api.nvim_set_current_win(editor_win)
     code_win = editor_win
@@ -511,24 +556,159 @@ local function scroll_transcript()
   end
 end
 
+local function ensure_turn_ns()
+  if not turn_ns then
+    turn_ns = vim.api.nvim_create_namespace("nai_turn")
+  end
+  if not pending_ns then
+    pending_ns = vim.api.nvim_create_namespace("nai_pending")
+  end
+  if not thinking_ns then
+    thinking_ns = vim.api.nvim_create_namespace("nai_thinking")
+  end
+end
+
+local function mark_span(ns, row, line, hl)
+  if line == "" then
+    return
+  end
+  vim.api.nvim_buf_set_extmark(transcript_buf, ns, row, 0, {
+    end_row = row,
+    end_col = #line,
+    hl_group = hl,
+  })
+end
+
+local function body_wrap_width(tag)
+  local win_w = 24
+  if win_ok(transcript_win) then
+    win_w = vim.api.nvim_win_get_width(transcript_win)
+  end
+  -- statuscolumn + rail + gap + tag, minus one so wrap does not re-break the line
+  return math.max(8, win_w - 2 - 1 - 2 - vim.fn.strdisplaywidth(tag) - 1)
+end
+
+local function take_chars(s, n)
+  return vim.fn.strcharpart(s, 0, n)
+end
+
+local function drop_chars(s, n)
+  return vim.fn.strcharpart(s, n)
+end
+
+local function wrap_to_width(text, width)
+  width = math.max(8, width)
+  local out = {}
+  local function emit_hard(word)
+    local rest = word
+    while vim.fn.strdisplaywidth(rest) > width do
+      local n = vim.fn.strcharlen(rest)
+      local take = 1
+      for i = 1, n do
+        if vim.fn.strdisplaywidth(take_chars(rest, i)) > width then
+          break
+        end
+        take = i
+      end
+      out[#out + 1] = take_chars(rest, take)
+      rest = drop_chars(rest, take)
+    end
+    return rest
+  end
+  for _, para in ipairs(vim.split(text, "\n", { plain = true })) do
+    if para == "" then
+      out[#out + 1] = ""
+    else
+      local line = ""
+      for word in para:gmatch("%S+") do
+        local trial = line == "" and word or (line .. " " .. word)
+        if vim.fn.strdisplaywidth(trial) <= width then
+          line = trial
+        else
+          if line ~= "" then
+            out[#out + 1] = line
+          end
+          if vim.fn.strdisplaywidth(word) > width then
+            line = emit_hard(word)
+          else
+            line = word
+          end
+        end
+      end
+      if line ~= "" then
+        out[#out + 1] = line
+      end
+    end
+  end
+  if #out == 0 then
+    out = { "" }
+  end
+  return out
+end
+
+-- Thick left rail + label. No 4-sided box: Neovim can't size those like CSS.
+local function paint_block(ns, start, len, rail_hl, tag, tag_hl, body_hl)
+  local lines = vim.api.nvim_buf_get_lines(transcript_buf, start, start + len, false)
+  local pad = string.rep(" ", #tag)
+  for i, line in ipairs(lines) do
+    local row = start + i - 1
+    local label = i == 1 and { tag, tag_hl } or { pad, "NaiCard" }
+    vim.api.nvim_buf_set_extmark(transcript_buf, ns, row, 0, {
+      virt_text = {
+        { " ", rail_hl },
+        { "  ", "NaiCard" },
+        label,
+      },
+      virt_text_pos = "inline",
+      right_gravity = false,
+    })
+    if body_hl then
+      mark_span(ns, row, line, body_hl)
+    end
+  end
+end
+
+local function paint_you(start, len)
+  ensure_turn_ns()
+  paint_block(turn_ns, start, len, "NaiYouRail", "YOU  ", "NaiYouTag")
+end
+
+local function paint_queued(start, len)
+  ensure_turn_ns()
+  vim.api.nvim_buf_clear_namespace(transcript_buf, pending_ns, 0, -1)
+  paint_block(pending_ns, start, len, "NaiQueuedRail", "QUEUED  ", "NaiQueued", "NaiQueued")
+end
+
+local function paint_thinking(row)
+  ensure_turn_ns()
+  local line = vim.api.nvim_buf_get_lines(transcript_buf, row, row + 1, false)[1] or ""
+  mark_span(thinking_ns, row, line, "NaiThinking")
+end
+
+local function clear_thinking()
+  thinking = false
+  if thinking_ns and transcript_buf and vim.api.nvim_buf_is_valid(transcript_buf) then
+    vim.api.nvim_buf_clear_namespace(transcript_buf, thinking_ns, 0, -1)
+  end
+end
+
 function M.start_turn(text)
   ensure_bufs()
   vim.bo[transcript_buf].modifiable = true
   local lines = vim.api.nvim_buf_get_lines(transcript_buf, 0, -1, false)
   local empty = #lines == 1 and lines[1] == ""
-  local body = vim.split(text, "\n", { plain = true })
-  if #body == 0 then
-    body = { "" }
-  end
-  local block = { "You" }
+  local you_tag = "YOU  "
+  local body = wrap_to_width(text, body_wrap_width(you_tag))
+  local block = {}
   for _, line in ipairs(body) do
     block[#block + 1] = line
   end
   block[#block + 1] = ""
-  block[#block + 1] = "Agent"
-  block[#block + 1] = ""
+  block[#block + 1] = "thinking..."
+  local you_start
   if empty then
     vim.api.nvim_buf_set_lines(transcript_buf, 0, -1, false, block)
+    you_start = 0
     stream_row = #block - 1
   else
     local count = vim.api.nvim_buf_line_count(transcript_buf)
@@ -537,10 +717,14 @@ function M.start_turn(text)
       appended[#appended + 1] = line
     end
     vim.api.nvim_buf_set_lines(transcript_buf, -1, -1, false, appended)
+    you_start = count + 1
     stream_row = count + #appended - 1
   end
   agent_start = stream_row
   agent_plain = true
+  thinking = true
+  paint_you(you_start, #body)
+  paint_thinking(stream_row)
   vim.bo[transcript_buf].modifiable = false
   scroll_transcript()
 end
@@ -551,9 +735,19 @@ function M.append_agent(chunk)
     stream_row = vim.api.nvim_buf_line_count(transcript_buf) - 1
   end
   vim.bo[transcript_buf].modifiable = true
-  local line = vim.api.nvim_buf_get_lines(transcript_buf, stream_row, stream_row + 1, false)[1] or ""
-  local parts = vim.split(line .. chunk, "\n", { plain = true })
-  vim.api.nvim_buf_set_lines(transcript_buf, stream_row, stream_row + 1, false, parts)
+  local parts
+  if thinking then
+    clear_thinking()
+    parts = vim.split(chunk, "\n", { plain = true })
+    if #parts == 0 then
+      parts = { "" }
+    end
+    vim.api.nvim_buf_set_lines(transcript_buf, stream_row, stream_row + 1, false, parts)
+  else
+    local line = vim.api.nvim_buf_get_lines(transcript_buf, stream_row, stream_row + 1, false)[1] or ""
+    parts = vim.split(line .. chunk, "\n", { plain = true })
+    vim.api.nvim_buf_set_lines(transcript_buf, stream_row, stream_row + 1, false, parts)
+  end
   local extra = #parts - 1
   if extra > 0 and pending_start then
     pending_start = pending_start + extra
@@ -568,13 +762,22 @@ function M.finish_agent()
     return
   end
   ensure_bufs()
+  vim.bo[transcript_buf].modifiable = true
+  if thinking then
+    vim.api.nvim_buf_set_lines(transcript_buf, stream_row, stream_row + 1, false, { "" })
+    clear_thinking()
+  end
   if not md_ns then
     md_ns = vim.api.nvim_create_namespace("nai_agent_md")
   end
   local src_lines = vim.api.nvim_buf_get_lines(transcript_buf, agent_start, stream_row + 1, false)
   local src = table.concat(src_lines, "\n")
+  if src == "" then
+    vim.bo[transcript_buf].modifiable = false
+    agent_plain = false
+    return
+  end
   local out, marks = markdown.render(src)
-  vim.bo[transcript_buf].modifiable = true
   vim.api.nvim_buf_set_lines(transcript_buf, agent_start, stream_row + 1, false, out)
   local extra = #out - #src_lines
   if extra ~= 0 and pending_start then
@@ -608,11 +811,9 @@ end
 
 function M.set_pending(text)
   ensure_bufs()
-  local body = vim.split(text, "\n", { plain = true })
-  if #body == 0 then
-    body = { "" }
-  end
-  local block = { "Pending" }
+  local queued_tag = "QUEUED  "
+  local body = wrap_to_width(text, body_wrap_width(queued_tag))
+  local block = {}
   for _, line in ipairs(body) do
     block[#block + 1] = line
   end
@@ -636,6 +837,7 @@ function M.set_pending(text)
     end
   end
   pending_len = #block
+  paint_queued(pending_start, pending_len)
   vim.bo[transcript_buf].modifiable = false
   scroll_transcript()
 end
@@ -646,6 +848,8 @@ function M.drop_pending()
     pending_len = nil
     return
   end
+  ensure_turn_ns()
+  vim.api.nvim_buf_clear_namespace(transcript_buf, pending_ns, 0, -1)
   vim.bo[transcript_buf].modifiable = true
   local start = pending_start
   if start > 0 then
@@ -685,7 +889,7 @@ function M.setup()
   style()
   vim.o.showtabline = 2
   vim.o.tabline = "%!v:lua.require('nvim_ai.ui').tabline()"
-  vim.o.winborder = "rounded"
+  vim.o.winborder = "single"
   vim.o.equalalways = false
   local group = vim.api.nvim_create_augroup("NaiChatLayout", { clear = true })
   vim.api.nvim_create_autocmd("WinEnter", {
