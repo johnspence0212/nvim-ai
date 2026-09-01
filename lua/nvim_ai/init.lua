@@ -65,14 +65,11 @@ end
 
 ui.bind_send(M.send)
 
-vim.keymap.set("n", "<leader>nn", function()
-  ui.toggle()
-end, { desc = "Chat hide/show" })
-
-vim.keymap.set("n", "<leader>nc", function()
+vim.keymap.set("n", "<leader>nn", "<Nop>", { desc = "Reserved" })
+vim.keymap.set("n", "<leader>nc", "<Nop>", { desc = "Reserved" })
+vim.keymap.set("n", "<leader>nq", function()
   M.cancel()
 end, { desc = "Chat cancel" })
-
 vim.keymap.set("n", "<leader>nk", function()
   ui.toggle_cheatsheet()
 end, { desc = "Chat command cheatsheet" })
