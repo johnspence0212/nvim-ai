@@ -1,5 +1,7 @@
 local M = {}
 
+local markdown = require("nvim_ai.markdown")
+
 local STROKE = "#7aa2f7"
 local CARD_BG = "#1a1b26"
 local CARD_FG = "#c0caf5"
@@ -42,6 +44,9 @@ local on_send
 local pending_start
 local pending_len
 local stream_row
+local agent_start
+local agent_plain
+local md_ns
 local composer_maps_buf
 local wire_composer
 
@@ -56,6 +61,12 @@ local function style()
   vim.api.nvim_set_hl(0, "NaiStroke", { fg = STROKE, bg = CARD_BG, bold = true })
   vim.api.nvim_set_hl(0, "FloatBorder", { fg = STROKE, bg = CARD_BG, bold = true })
   vim.api.nvim_set_hl(0, "WinBorder", { fg = STROKE, bg = CARD_BG, bold = true })
+  vim.api.nvim_set_hl(0, "NaiMdHeading", { fg = STROKE, bg = CARD_BG, bold = true })
+  vim.api.nvim_set_hl(0, "NaiMdBold", { fg = CARD_FG, bg = CARD_BG, bold = true })
+  vim.api.nvim_set_hl(0, "NaiMdItalic", { fg = CARD_FG, bg = CARD_BG, italic = true })
+  vim.api.nvim_set_hl(0, "NaiMdCode", { fg = "#9ece6a", bg = "#292e42" })
+  vim.api.nvim_set_hl(0, "NaiMdFence", { fg = "#9ece6a", bg = "#292e42" })
+  vim.api.nvim_set_hl(0, "NaiMdList", { fg = STROKE, bg = CARD_BG })
 end
 
 local function configure_buf(buf, name)
@@ -528,6 +539,8 @@ function M.start_turn(text)
     vim.api.nvim_buf_set_lines(transcript_buf, -1, -1, false, appended)
     stream_row = count + #appended - 1
   end
+  agent_start = stream_row
+  agent_plain = true
   vim.bo[transcript_buf].modifiable = false
   scroll_transcript()
 end
@@ -547,6 +560,44 @@ function M.append_agent(chunk)
   end
   stream_row = stream_row + extra
   vim.bo[transcript_buf].modifiable = false
+  scroll_transcript()
+end
+
+function M.finish_agent()
+  if not agent_plain or not agent_start or not stream_row then
+    return
+  end
+  ensure_bufs()
+  if not md_ns then
+    md_ns = vim.api.nvim_create_namespace("nai_agent_md")
+  end
+  local src_lines = vim.api.nvim_buf_get_lines(transcript_buf, agent_start, stream_row + 1, false)
+  local src = table.concat(src_lines, "\n")
+  local out, marks = markdown.render(src)
+  vim.bo[transcript_buf].modifiable = true
+  vim.api.nvim_buf_set_lines(transcript_buf, agent_start, stream_row + 1, false, out)
+  local extra = #out - #src_lines
+  if extra ~= 0 and pending_start then
+    pending_start = pending_start + extra
+  end
+  stream_row = agent_start + #out - 1
+  vim.api.nvim_buf_clear_namespace(transcript_buf, md_ns, agent_start, stream_row + 1)
+  for _, mark in ipairs(marks) do
+    if mark.line then
+      pcall(vim.api.nvim_buf_set_extmark, transcript_buf, md_ns, agent_start + mark.row, 0, {
+        line_hl_group = mark.hl,
+        hl_eol = true,
+      })
+    else
+      pcall(vim.api.nvim_buf_set_extmark, transcript_buf, md_ns, agent_start + mark.row, mark.col, {
+        end_row = agent_start + mark.row,
+        end_col = mark.end_col,
+        hl_group = mark.hl,
+      })
+    end
+  end
+  vim.bo[transcript_buf].modifiable = false
+  agent_plain = false
   scroll_transcript()
 end
 

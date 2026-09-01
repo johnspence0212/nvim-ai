@@ -10,6 +10,7 @@ ui.setup()
 local send_turn
 
 local function finish_turn()
+  ui.finish_agent()
   local queued = pending_text
   pending_text = nil
   ui.drop_pending()
