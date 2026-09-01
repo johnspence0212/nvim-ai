@@ -1,0 +1,21 @@
+# How Cursor treats send while a turn is in flight
+
+Researched 2026-09-01 against first-party Cursor docs, the Agent Client Protocol (ACP) v1 spec, and the ACP v2 prompt RFD. This note is the source of facts for [How does Chat queue a turn while one is in flight?](https://linear.app/johnspence/issue/JOH-66/how-does-chat-queue-a-turn-while-one-is-in-flight).
+
+Out of scope here: Ask/Plan/Agent modes, permissions, diffs, @-context, buffer/selection.
+
+## Facts the queue ticket needs
+
+- **ACP v1 has no queue.** One `session/prompt` is a full turn. The Client MAY send another `session/prompt` only after that request returns `{ stopReason }`. Interrupt is `session/cancel`, after which the in-flight `session/prompt` MUST return `stopReason: "cancelled"`. Queueing follow-ups is a **client** concern, not a protocol method. ([ACP v1 prompt turn](https://agentclientprotocol.com/protocol/v1/prompt-turn.md))
+- **ACP v2 has not specified queueing either.** The v2 prompt RFD says it is "not clear how to model queued messages" in v1, that queueing "is decidedly not part of this RFD", and that today a Client that wants to interrupt typically sends `session/cancel` before a new prompt. ([ACP v2 prompt lifecycle RFD](https://agentclientprotocol.com/rfds/v2/prompt.md))
+- **Cursor's editor Agent panel does queue.** While Agent is working: type the next instruction, press Enter, the message is added to a queue, **messages appear in order below the active task**, they can be **drag-reordered**, and Agent processes them **sequentially after finishing** the current task. No depth limit is documented. ([Cursor Agent overview](https://cursor.com/docs/agent/overview.md))
+- **Cursor also has a non-queue send while working.** Cmd+Enter "send immediately, bypassing the queue": the text is **appended to the most recent user message** and processed right away (attaches to tool results). That is replace/steer of the current turn, not a new queued turn. ([Cursor Agent overview](https://cursor.com/docs/agent/overview.md))
+- **First-party shortcuts disagree with that overview on which key queues.** Chat shortcut table: Return = "Nudge (default)", Ctrl+Return = "Queue message", Cmd+Return when typing = "Force send message", Cmd+Shift+Backspace = "Cancel generation". The overview says Enter queues and Cmd+Enter force-sends. Treat the overview's *behavior* (visible ordered queue vs force-send) as the product fact; treat the exact keys as inconsistent across Cursor's own pages. ([Keyboard shortcuts](https://cursor.com/docs/reference/keyboard-shortcuts.md), [Cursor Agent overview](https://cursor.com/docs/agent/overview.md))
+- **Cancel generation is documented; cancel-vs-queue is not.** Cmd+Shift+Backspace is "Cancel generation". Cursor's queue section never says whether cancel drops queued messages, keeps them, or sends the next one immediately. That is unspecified in first-party docs as of this date. ([Keyboard shortcuts](https://cursor.com/docs/reference/keyboard-shortcuts.md), [Cursor Agent overview](https://cursor.com/docs/agent/overview.md))
+- **Other Cursor surfaces are not the sidepane queue.** cursor.com/agents (rolling into the Agents Window): follow-up at the next tool call ("Send now" / Enter twice); Tab queues for after the turn. CLI: Enter while the agent works steers at a safe boundary; Enter again interrupts the turn. Do not copy CLI or Agents Window keys into Chat. ([Cursor Agent overview](https://cursor.com/docs/agent/overview.md))
+
+## Implication for this Profile
+
+Chat already speaks ACP v1 (`session/prompt` until `stopReason`, `<leader>nc` → `session/cancel`). A send queue must live **in the Profile**, in front of ACP: hold follow-ups, send the next `session/prompt` when the current one returns. Cursor's documented sidepane is: queue is **visible**, **ordered**, **reorderable**, **unbounded in the docs**, processed **after** the current task — plus a separate force-send that is **out of this map's standing** (this map already chose Enter queues, not cancel-and-replace).
+
+What cancel does to the queue is **not** a Cursor-documented fact. [How does Chat queue a turn while one is in flight?](https://linear.app/johnspence/issue/JOH-66/how-does-chat-queue-a-turn-while-one-is-in-flight) has to decide that.
