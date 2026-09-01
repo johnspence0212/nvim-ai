@@ -1,6 +1,6 @@
 # nvim-ai
 
-An isolated Neovim Profile (`NVIM_APPNAME=nvim-ai`). Distinct from a default Neovim configuration. Neovim is the editor; Cursor Agent is the AI runtime, wired later via ACP.
+An isolated Neovim Profile (`NVIM_APPNAME=nvim-ai`) on LazyVim. Distinct from a default Neovim configuration (`nvim` still opens that one). Cursor Agent is the AI runtime, wired later via ACP. `:Nai` is this Profile's command.
 
 Keep the git clone where it is. Neovim finds this Profile through `NVIM_APPNAME`, not by moving the repo.
 
@@ -22,26 +22,12 @@ ln -s /path/to/nvim-ai ~/.config/nvim-ai
 
 ## Launch
 
-From this repo:
+`nvim` stays your default configuration. This Profile is a separate command:
 
-```powershell
-.\nai.ps1 .
+```text
+nvim-ai .
 ```
 
-```bash
-./nai .
-```
+That works once this clone's directory is on your `PATH` (on this machine, `%LOCALAPPDATA%\nvim-ai` via the junction). `nvim-ai.cmd` / `nvim-ai` set `NVIM_APPNAME=nvim-ai` and exec `nvim`.
 
-Or set `NVIM_APPNAME=nvim-ai` and run `nvim` yourself.
-
-Optional user alias, after the junction or symlink exists:
-
-```powershell
-function nai { $env:NVIM_APPNAME = "nvim-ai"; nvim @args }
-```
-
-```bash
-alias nai='NVIM_APPNAME=nvim-ai nvim'
-```
-
-Then `nai .`
+Repo-local shortcuts still work: `.\nai.ps1 .` / `./nai .`.

@@ -1,5 +1,3 @@
+-- bootstrap lazy.nvim, LazyVim, and :Nai
 require("config.lazy")
-
-vim.opt.clipboard = "unnamedplus"
-vim.opt.number = true
-vim.opt.ignorecase = true
+require("nvim_ai")
