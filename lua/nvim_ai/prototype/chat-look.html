@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>PROTOTYPE — Chat look</title>
+  <!--
+    Three variants of Chat vs the editor, switchable via ?variant=.
+    A keeps nested windows in a bottom split (hard window edges).
+    B and C keep that Chat in a right-hand column: rounded cards
+    with a thick border. Grow/shrink the Chat window with Vim's
+    <C-w>> / <C-w>< (same as any vsplit). No drag gutter.
+    Fake stream; no ACP. Throwaway. Open this file in a browser.
+  -->
+  <style>
+    :root {
+      --bg: #1a1b26;
+      --bg-dim: #16161e;
+      --fg: #c0caf5;
+      --muted: #565f89;
+      --you: #7aa2f7;
+      --agent: #9ece6a;
+      --pending: #e0af68;
+      --border: #3b4261;
+      --card-line: #7aa2f7;
+      --card-stroke: 4px solid var(--card-line);
+      --winbar: #292e42;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: #0f0f14; color: var(--fg); font-family: ui-monospace, "JetBrains Mono", Menlo, monospace; }
+    body { display: flex; flex-direction: column; }
+    .frame { flex: 1; display: flex; flex-direction: column; min-height: 0; margin: 12px 12px 64px; border: 1px solid var(--border); background: var(--bg); }
+    .frame.layout-sidebar, .frame.layout-peer {
+      border: 0;
+      background: #0b0c12;
+    }
+    .topbar {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      background: #3d59a1;
+      color: #fff;
+      padding: 3px 12px;
+      font-size: 11px;
+      min-height: 26px;
+    }
+    .topbar-cmds { display: flex; flex-wrap: wrap; gap: 4px 2px; min-width: 0; }
+    .topbar-info { color: #c0caf5; white-space: nowrap; flex-shrink: 0; }
+    .topbar button {
+      background: transparent;
+      border: 0;
+      color: #fff;
+      font: inherit;
+      padding: 1px 6px;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+    .topbar button:hover { background: #2a3d73; }
+    .topbar kbd {
+      font: inherit;
+      opacity: 0.85;
+    }
+    .workspace { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+    .layout-sidebar .workspace, .layout-peer .workspace {
+      flex-direction: row;
+      gap: 14px;
+      padding: 14px;
+    }
+    .editor-col { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+    .layout-sidebar .editor-col, .layout-peer .editor-col {
+      border-radius: 16px;
+      overflow: hidden;
+      background: var(--bg);
+      border: var(--card-stroke);
+    }
+    .editor { flex: 1; display: flex; min-height: 0; overflow: hidden; }
+    .gutter { width: 3.2em; background: var(--bg-dim); color: var(--muted); text-align: right; padding: 8px 8px 8px 0; line-height: 1.45; user-select: none; border-right: 1px solid var(--border); }
+    .layout-sidebar .gutter, .layout-peer .gutter { border-right: 0; background: var(--bg); }
+    .code { flex: 1; padding: 8px 12px; line-height: 1.45; white-space: pre; overflow: auto; }
+    .statusline { display: flex; justify-content: space-between; background: #3d59a1; color: #fff; font-size: 12px; padding: 2px 8px; }
+    .layout-sidebar .statusline, .layout-peer .statusline {
+      background: #24283b;
+      color: var(--muted);
+    }
+    .chat-split { display: flex; flex-direction: column; background: var(--bg-dim); min-height: 0; }
+    .layout-bottom .chat-split { flex: 1; min-height: 140px; max-height: 28%; border-top: 1px solid var(--border); }
+    .layout-sidebar .chat-split, .layout-peer .chat-split {
+      border-left: 0;
+      border-radius: 0;
+      overflow: visible;
+      background: transparent;
+    }
+    .layout-sidebar .chat-split { flex: 0 0 30%; width: 30%; min-width: 220px; }
+    .layout-peer .chat-split { flex: 0 0 50%; width: 50%; min-width: 220px; }
+    .chat-split.hidden { display: none; }
+    .winbar { background: var(--winbar); color: var(--muted); font-size: 12px; padding: 2px 8px; display: flex; gap: 12px; }
+    .winbar strong { color: var(--fg); font-weight: 600; }
+    textarea, .composer-input {
+      width: 100%; background: transparent; color: var(--fg); border: 0; outline: none;
+      font: inherit; resize: none; padding: 6px 8px;
+    }
+    .hint { color: var(--muted); font-size: 11px; padding: 0 8px 4px; }
+    .state-dump {
+      position: fixed; bottom: 64px; left: 12px; width: 260px; max-height: 36%;
+      background: #0b0c12; border: 1px dashed var(--pending); color: var(--pending);
+      font-size: 11px; padding: 8px; overflow: auto; white-space: pre; z-index: 5;
+    }
+    .switcher {
+      position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+      display: flex; align-items: center; gap: 10px; background: #f6f6f0; color: #111;
+      border-radius: 999px; padding: 8px 14px; box-shadow: 0 8px 24px #0008; z-index: 10;
+      font: 13px ui-sans-serif, system-ui, sans-serif;
+    }
+    .switcher button { border: 0; background: #111; color: #f6f6f0; width: 28px; height: 28px; border-radius: 50%; cursor: pointer; font-size: 16px; }
+    .switcher .label { min-width: 340px; text-align: center; font-weight: 600; }
+
+    .a-chat { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+    .panel { display: flex; flex-direction: column; min-height: 0; }
+    .transcript-panel { flex: 1; }
+    .a-transcript { flex: 1; overflow: auto; padding: 6px 8px; min-height: 0; }
+    .a-role { color: var(--you); margin-top: 8px; }
+    .a-role.agent { color: var(--agent); }
+    .a-role.pending { color: var(--pending); }
+    .a-body { white-space: pre-wrap; margin: 0 0 4px 0; }
+    .a-composer-win { border-top: 1px solid var(--border); background: var(--bg); }
+    .a-composer-win textarea { height: 2.8em; }
+    .layout-sidebar .a-chat, .layout-peer .a-chat { gap: 10px; padding: 0; }
+    .layout-sidebar .panel, .layout-peer .panel {
+      border-radius: 16px;
+      overflow: hidden;
+      background: #1a1b26;
+      border: var(--card-stroke);
+    }
+    .layout-sidebar .winbar, .layout-peer .winbar {
+      background: transparent;
+      padding: 10px 12px 4px;
+    }
+    .layout-sidebar .a-composer-win, .layout-peer .a-composer-win {
+      border-top: 0;
+      background: #1a1b26;
+      flex: 0 0 auto;
+    }
+    .layout-sidebar .composer-input, .layout-peer .composer-input {
+      margin: 0 10px 10px;
+      width: calc(100% - 20px);
+      border-radius: 10px;
+      background: #16161e;
+      padding: 8px 10px;
+      border: 0;
+    }
+  </style>
+</head>
+<body>
+  <pre class="state-dump" id="stateDump"></pre>
+  <div class="frame" id="frame">
+    <div class="topbar">
+      <div class="topbar-cmds">
+        <button type="button" data-act="nn"><kbd>&lt;leader&gt;nn</kbd> hide/show</button>
+        <button type="button" data-act="nc"><kbd>&lt;leader&gt;nc</kbd> cancel</button>
+        <button type="button" data-act="grow"><kbd>&lt;C-w&gt;&gt;</kbd> grow</button>
+        <button type="button" data-act="shrink"><kbd>&lt;C-w&gt;&lt;</kbd> shrink</button>
+      </div>
+      <div class="topbar-info" id="topbarInfo">Session · idle</div>
+    </div>
+    <div class="workspace">
+    <div class="editor-col">
+      <div class="editor">
+        <div class="gutter">1<br>2<br>3<br>4<br>5<br>6<br>7<br>8<br>9<br>10<br>11<br>12</div>
+        <div class="code">-- lua/nvim_ai/init.lua
+local backend = require("nvim_ai.backend")
+local ui = require("nvim_ai.ui")
+
+function M.nai(args)
+  -- code stays in this column
+  -- Chat is the other split
+end
+
+return M</div>
+      </div>
+      <div class="statusline"><span>NORMAL  lua/nvim_ai/init.lua</span><span>nvim-ai</span></div>
+    </div>
+    <div class="chat-split" id="chatSplit"></div>
+    </div>
+  </div>
+  <div class="switcher">
+    <button type="button" id="prev" aria-label="previous variant">←</button>
+    <div class="label" id="switchLabel"></div>
+    <button type="button" id="next" aria-label="next variant">→</button>
+  </div>
+  <script>
+    const VARIANTS = {
+      A: "Nested windows · bottom split",
+      B: "Right sidebar · bordered",
+      C: "Equal columns · bordered",
+    };
+    const KEYS = Object.keys(VARIANTS);
+    const params = new URLSearchParams(location.search);
+    let variant = (params.get("variant") || "A").toUpperCase();
+    if (!VARIANTS[variant]) variant = "A";
+
+    const STREAM = "pong — then a longer fake turn so you can queue a follow-up while this is still streaming. one two three four five six seven eight nine ten.";
+
+    const state = {
+      chatVisible: true,
+      inflight: false,
+      pending: null,
+      composer: "",
+      turns: [],
+      cancelledLast: false,
+      chatWidthPct: null,
+    };
+    let timer = null;
+    let streamIdx = 0;
+
+    function dump() {
+      document.getElementById("stateDump").textContent =
+        "PROTOTYPE STATE\n" + JSON.stringify({
+          variant,
+          chatVisible: state.chatVisible,
+          inflight: state.inflight,
+          pending: state.pending,
+          composer: state.composer,
+          turns: state.turns,
+          chatWidthPct: chatWidthPct(),
+        }, null, 2);
+    }
+
+    function stopStream(cancelled) {
+      if (timer) clearInterval(timer);
+      timer = null;
+      state.inflight = false;
+      const last = state.turns[state.turns.length - 1];
+      if (last && last.role === "agent") last.streaming = false;
+      if (cancelled) state.cancelledLast = true;
+    }
+
+    function startStream() {
+      state.inflight = true;
+      state.cancelledLast = false;
+      streamIdx = 0;
+      const agent = { role: "agent", text: "", streaming: true };
+      state.turns.push(agent);
+      timer = setInterval(() => {
+        const step = 2;
+        agent.text = STREAM.slice(0, streamIdx + step);
+        streamIdx += step;
+        if (streamIdx >= STREAM.length) {
+          stopStream(false);
+          drainPending();
+        }
+        render();
+      }, 160);
+    }
+
+    function drainPending() {
+      if (!state.pending) return;
+      const text = state.pending;
+      state.pending = null;
+      state.turns.push({ role: "you", text });
+      startStream();
+    }
+
+    function send() {
+      const text = state.composer.replace(/\s+$/, "");
+      if (!text) return;
+      if (state.inflight) {
+        state.pending = text;
+        state.composer = "";
+        const queued = render();
+        if (queued) queued.focus();
+        return;
+      }
+      state.composer = "";
+      state.turns.push({ role: "you", text });
+      startStream();
+      const ta = render();
+      if (ta) ta.focus();
+    }
+
+    function cancel() {
+      if (!state.inflight) return;
+      stopStream(true);
+      state.pending = null;
+      render();
+    }
+
+    function toggleChat() {
+      state.chatVisible = !state.chatVisible;
+      render();
+    }
+
+    function onComposerKey(ev) {
+      if (ev.key === "Enter" && !ev.shiftKey) {
+        ev.preventDefault();
+        send();
+      }
+    }
+
+    function transcriptHtml() {
+      const bits = [];
+      for (const t of state.turns) {
+        bits.push(`<div class="a-role ${t.role}">${t.role === "you" ? "You" : "Agent"}${t.streaming ? " …" : ""}</div>`);
+        bits.push(`<div class="a-body">${esc(t.text)}</div>`);
+      }
+      if (state.pending) {
+        bits.push(`<div class="a-role pending">You · pending</div>`);
+        bits.push(`<div class="a-body">${esc(state.pending)}</div>`);
+      }
+      return bits.join("");
+    }
+
+    function esc(s) {
+      return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+    }
+
+    let shellFor = null;
+
+    function chatWidthPct() {
+      if (state.chatWidthPct != null) return state.chatWidthPct;
+      return variant === "C" ? 50 : 30;
+    }
+
+    function applyChatWidth() {
+      const split = document.getElementById("chatSplit");
+      const column = variant === "B" || variant === "C";
+      if (!column || !state.chatVisible) {
+        split.style.flex = "";
+        split.style.width = "";
+        return;
+      }
+      const pct = chatWidthPct();
+      split.style.flex = "0 0 " + pct + "%";
+      split.style.width = pct + "%";
+    }
+
+    function bumpChatWidth(dir) {
+      if (variant === "A" || !state.chatVisible) return;
+      let pct = chatWidthPct() + dir * 8;
+      if (pct < 22) pct = 22;
+      if (pct > 70) pct = 70;
+      state.chatWidthPct = pct;
+      applyChatWidth();
+      dump();
+    }
+
+    function applyLayout() {
+      const frame = document.getElementById("frame");
+      frame.classList.remove("layout-bottom", "layout-sidebar", "layout-peer");
+      if (!state.chatVisible) {
+        applyChatWidth();
+        return;
+      }
+      if (variant === "A") frame.classList.add("layout-bottom");
+      else if (variant === "B") frame.classList.add("layout-sidebar");
+      else frame.classList.add("layout-peer");
+      applyChatWidth();
+    }
+
+    function ensureComposer() {
+      const mount = document.getElementById("composerMount");
+      if (!mount) return null;
+      let ta = mount.querySelector("textarea");
+      if (!ta) {
+        ta = document.createElement("textarea");
+        ta.className = "composer-input";
+        ta.addEventListener("input", (e) => { state.composer = e.target.value; dump(); });
+        ta.addEventListener("keydown", onComposerKey);
+        mount.appendChild(ta);
+      }
+      ta.placeholder = state.turns.length === 0
+        ? "Composer — empty Chat, first send starts the Session"
+        : "Composer";
+      if (ta.value !== state.composer) ta.value = state.composer;
+      return ta;
+    }
+
+    function ensureShell() {
+      applyLayout();
+      const split = document.getElementById("chatSplit");
+      split.classList.toggle("hidden", !state.chatVisible);
+      document.getElementById("switchLabel").textContent = variant + " (" + VARIANTS[variant] + ")";
+      if (!state.chatVisible) {
+        shellFor = "hidden";
+        split.innerHTML = "";
+        return;
+      }
+      if (shellFor === "nested" && split.querySelector("#log")) return;
+      shellFor = "nested";
+      split.innerHTML = `
+        <div class="a-chat">
+          <div class="panel transcript-panel">
+            <div class="winbar"><strong>Chat</strong><span>transcript (read-only)</span><span id="place"></span><span id="flight"></span></div>
+            <div class="a-transcript" id="log"></div>
+          </div>
+          <div class="panel a-composer-win">
+            <div class="winbar"><strong>Composer</strong><span>Enter send · Shift-Enter newline</span></div>
+            <div id="composerMount"></div>
+          </div>
+        </div>`;
+      ensureComposer();
+    }
+
+    function updateTopbar() {
+      const info = document.getElementById("topbarInfo");
+      const bits = ["Session"];
+      if (!state.chatVisible) bits.push("Chat hidden");
+      else if (state.inflight) bits.push("in flight");
+      else bits.push("idle");
+      if (state.pending) bits.push("1 pending");
+      info.textContent = bits.join(" · ");
+      const col = variant === "B" || variant === "C";
+      document.querySelector('[data-act="grow"]').hidden = !col;
+      document.querySelector('[data-act="shrink"]').hidden = !col;
+    }
+
+    function render() {
+      ensureShell();
+      updateTopbar();
+      if (!state.chatVisible) { dump(); return; }
+      const place = document.getElementById("place");
+      if (place) place.textContent = variant === "A" ? "bottom split" : "right column";
+      const flight = document.getElementById("flight");
+      if (flight) flight.textContent = state.inflight ? "in flight" : "idle";
+      const log = document.getElementById("log");
+      log.innerHTML = transcriptHtml() || `<div class="hint">First open is empty.</div>`;
+      log.scrollTop = log.scrollHeight;
+      const ta = ensureComposer();
+      dump();
+      return ta;
+    }
+
+    function setVariant(next) {
+      variant = next;
+      state.chatWidthPct = null;
+      const url = new URL(location.href);
+      url.searchParams.set("variant", variant);
+      history.replaceState(null, "", url);
+      render();
+    }
+
+    function cycle(dir) {
+      const i = KEYS.indexOf(variant);
+      setVariant(KEYS[(i + dir + KEYS.length) % KEYS.length]);
+    }
+
+    document.getElementById("prev").onclick = () => cycle(-1);
+    document.getElementById("next").onclick = () => cycle(1);
+    document.querySelector('[data-act="nn"]').onclick = toggleChat;
+    document.querySelector('[data-act="nc"]').onclick = cancel;
+    document.querySelector('[data-act="grow"]').onclick = () => bumpChatWidth(1);
+    document.querySelector('[data-act="shrink"]').onclick = () => bumpChatWidth(-1);
+    document.addEventListener("keydown", (e) => {
+      const tag = e.target.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || e.target.isContentEditable) return;
+      if (e.key === "ArrowLeft") cycle(-1);
+      if (e.key === "ArrowRight") cycle(1);
+    });
+    render();
+  </script>
+</body>
+</html>
