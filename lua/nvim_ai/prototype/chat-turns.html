@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>PROTOTYPE — Retro square Chat (OpenCode page)</title>
+  <!--
+    Three retro / OpenCode-ish turn variants. Square cards, square You.
+    BLUE is You. Agent is never a bubble. thinking... while in flight.
+    Switch with ?variant=. Fake stream; no ACP. Throwaway.
+  -->
+  <style>
+    :root {
+      --bg: #1a1b26;
+      --fg: #c0caf5;
+      --muted: #565f89;
+      --you: #7aa2f7;
+      --you-deep: #3d59a1;
+      --agent: #c0caf5;
+      --pending: #e0af68;
+      --border: #3b4261;
+      --stroke: 2px solid #7aa2f7;
+      --fence: #16161e;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: #0f0f14; color: var(--fg); font-family: ui-monospace, "IBM Plex Mono", "JetBrains Mono", Menlo, monospace; }
+    body { display: flex; flex-direction: column; }
+    .frame {
+      flex: 1; display: flex; flex-direction: column; min-height: 0;
+      margin: 12px 12px 64px; background: #0b0c12;
+    }
+    .topbar {
+      flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between;
+      gap: 16px; background: #3d59a1; color: #fff; padding: 3px 12px; font-size: 11px; min-height: 26px;
+    }
+    .topbar-cmds { display: flex; flex-wrap: wrap; gap: 4px 2px; }
+    .topbar-info { color: #c0caf5; white-space: nowrap; }
+    .topbar button {
+      background: transparent; border: 0; color: #fff; font: inherit; padding: 1px 6px; cursor: pointer;
+    }
+    .topbar button:hover { background: #2a3d73; }
+    .topbar kbd { font: inherit; opacity: 0.85; }
+    .workspace { flex: 1; display: flex; flex-direction: row; min-height: 0; gap: 8px; padding: 8px; }
+    .editor-col {
+      flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0;
+      background: var(--bg); border: var(--stroke); border-radius: 0;
+    }
+    .editor { flex: 1; display: flex; min-height: 0; overflow: hidden; }
+    .gutter { width: 3.2em; color: var(--muted); text-align: right; padding: 8px 8px 8px 0; line-height: 1.45; user-select: none; }
+    .code { flex: 1; padding: 8px 12px; line-height: 1.45; white-space: pre; overflow: auto; }
+    .statusline { display: flex; justify-content: space-between; background: #24283b; color: var(--muted); font-size: 12px; padding: 2px 8px; }
+    .chat-split { flex: 0 0 32%; width: 32%; min-width: 240px; display: flex; flex-direction: column; min-height: 0; }
+    .chat-split.hidden { display: none; }
+    .a-chat { flex: 1; display: flex; flex-direction: column; min-height: 0; gap: 8px; }
+    .panel {
+      border-radius: 0; overflow: hidden; background: #1a1b26; border: var(--stroke);
+      display: flex; flex-direction: column; min-height: 0;
+    }
+    .transcript-panel { flex: 1; }
+    .a-transcript { flex: 1; overflow: auto; padding: 10px; min-height: 0; }
+    .a-composer-win { flex: 0 0 auto; }
+    .composer-input {
+      margin: 0; width: 100%; border-radius: 0; background: #16161e; color: var(--fg);
+      border: 0; outline: none; font: inherit; resize: none; padding: 8px 10px; min-height: 4.5em;
+    }
+    .winbar { color: var(--muted); font-size: 11px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+    .winbar strong { color: var(--fg); font-weight: 600; }
+    .state-dump {
+      position: fixed; bottom: 64px; left: 12px; width: 280px; max-height: 36%;
+      background: #0b0c12; border: 1px dashed var(--pending); color: var(--pending);
+      font-size: 11px; padding: 8px; overflow: auto; white-space: pre; z-index: 5;
+    }
+    .switcher {
+      position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+      display: flex; align-items: center; gap: 10px; background: #f6f6f0; color: #111;
+      border-radius: 999px; padding: 8px 14px; box-shadow: 0 8px 24px #0008; z-index: 10;
+      font: 13px ui-sans-serif, system-ui, sans-serif;
+    }
+    .switcher button { border: 0; background: #111; color: #f6f6f0; width: 28px; height: 28px; border-radius: 50%; cursor: pointer; font-size: 16px; }
+    .switcher .label { min-width: 420px; text-align: center; font-weight: 600; }
+
+    .variant-banner {
+      position: sticky; top: 0; z-index: 2;
+      font: 600 11px ui-monospace, monospace;
+      padding: 6px 8px; margin: -10px -10px 10px; letter-spacing: 0.02em;
+    }
+    .turn { margin: 0 0 14px; }
+    .agent-body { line-height: 1.5; color: var(--agent); }
+    .agent-body p { margin: 0 0 0.55em; }
+    .agent-body pre {
+      margin: 0.35em 0 0.7em; padding: 8px 10px; background: var(--fence);
+      border: 1px solid var(--border); border-radius: 0; color: #9ece6a; font-size: 12px; white-space: pre-wrap;
+    }
+    .dots::after { content: ""; animation: dots 1.2s steps(4, end) infinite; }
+    @keyframes dots {
+      0% { content: ""; }
+      25% { content: "."; }
+      50% { content: ".."; }
+      75% { content: "..."; }
+    }
+
+    /* A — Empty square You + BLUE left rail. Agent is a dump. */
+    .var-a .variant-banner { background: #16161e; color: var(--you); border-bottom: 2px solid var(--you); }
+    .var-a .you-block {
+      background: transparent; color: var(--fg); border-radius: 0;
+      border: 1px solid var(--border); border-left: 4px solid var(--you);
+      padding: 8px 10px; white-space: pre-wrap; font-size: 12px;
+    }
+    .var-a .you-tag {
+      display: block; color: var(--you); font-size: 10px; margin-bottom: 4px; letter-spacing: 0.08em;
+    }
+    .var-a .thinking { color: var(--muted); font-size: 12px; padding: 8px 0; }
+    .var-a .pending-block {
+      background: transparent; border: 1px dashed var(--border); border-left: 4px dashed var(--pending);
+      color: var(--pending); padding: 8px 10px; font-size: 12px;
+    }
+
+    /* B — Blue square on the RIGHT, like a hard iMessage. Agent flush left. */
+    .var-b .variant-banner { background: var(--you); color: #1a1b26; }
+    .var-b .you-wrap { display: flex; justify-content: flex-end; }
+    .var-b .you-square {
+      background: var(--you); color: #1a1b26; border-radius: 0;
+      padding: 8px 10px; max-width: 82%; white-space: pre-wrap; font-size: 12px;
+    }
+    .var-b .thinking { color: var(--muted); font-size: 12px; font-style: italic; padding: 8px 0; }
+    .var-b .pending-wrap { display: flex; justify-content: flex-end; }
+    .var-b .pending-square {
+      border: 1px dashed var(--you); color: var(--you); padding: 8px 10px; max-width: 82%; font-size: 12px;
+    }
+
+    /* C — ASCII box-draw You in blue. Agent is unboxed terminal text. */
+    .var-c .variant-banner { background: #16161e; color: var(--you); border-bottom: 2px solid var(--you); }
+    .var-c .ascii {
+      color: var(--you); white-space: pre; font-size: 12px; line-height: 1.35; margin: 0;
+    }
+    .var-c .thinking { color: var(--muted); font-size: 12px; padding: 6px 0 8px; }
+    .var-c .agent-body { border-left: 2px solid var(--border); padding-left: 10px; }
+    .var-c .pending-ascii { color: var(--pending); white-space: pre; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <pre class="state-dump" id="stateDump"></pre>
+  <div class="frame">
+    <div class="topbar">
+      <div class="topbar-cmds">
+        <button type="button" data-act="nn"><kbd>&lt;leader&gt;nn</kbd> hide/show</button>
+        <button type="button" data-act="nc"><kbd>&lt;leader&gt;nc</kbd> cancel</button>
+        <button type="button" data-act="demo">play sample turn</button>
+      </div>
+      <div class="topbar-info" id="topbarInfo">Session · idle</div>
+    </div>
+    <div class="workspace">
+      <div class="editor-col">
+        <div class="editor">
+          <div class="gutter">1<br>2<br>3<br>4<br>5<br>6<br>7<br>8<br>9<br>10</div>
+          <div class="code">-- square cards, square You, blue = You
+-- Agent stays a dump, not a bubble</div>
+        </div>
+        <div class="statusline"><span>NORMAL  lua/nvim_ai/init.lua</span><span>nvim-ai</span></div>
+      </div>
+      <div class="chat-split" id="chatSplit">
+        <div class="a-chat">
+          <div class="panel transcript-panel">
+            <div class="winbar"><strong>Chat</strong> · transcript</div>
+            <div class="a-transcript" id="log"></div>
+          </div>
+          <div class="panel a-composer-win">
+            <div class="winbar"><strong>Composer</strong> · Enter send · Shift-Enter newline</div>
+            <textarea class="composer-input" id="composer" placeholder="Ask for a C hello world…"></textarea>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="switcher">
+    <button type="button" id="prev" aria-label="previous variant">←</button>
+    <div class="label" id="switchLabel"></div>
+    <button type="button" id="next" aria-label="next variant">→</button>
+  </div>
+  <script>
+    const VARIANTS = {
+      A: "Empty square You · BLUE left rail",
+      B: "Square You on the RIGHT · still blue",
+      C: "ASCII box-draw You · blue",
+    };
+    const KEYS = Object.keys(VARIANTS);
+    const params = new URLSearchParams(location.search);
+    let variant = (params.get("variant") || "A").toUpperCase();
+    if (!VARIANTS[variant]) variant = "A";
+
+    const REPLY = [
+      { t: 0, html: "<p>Here's a minimal C hello world:</p>" },
+      { t: 400, html: "<pre>#include &lt;stdio.h&gt;\n\nint main(void) {\n    printf(\"Hello, world!\\n\");\n    return 0;\n}</pre>" },
+      { t: 900, html: "<p>Save it as hello.c, then compile and run.</p>" },
+    ];
+    const DONE = REPLY.map((c) => c.html).join("");
+
+    const state = {
+      chatVisible: true,
+      phase: "thinking",
+      pending: "also add a Makefile",
+      composer: "",
+      turns: [
+        { kind: "you", text: "hello world in C?" },
+        { kind: "agent", html: DONE, streaming: false },
+        { kind: "you", text: "add comments" },
+        { kind: "agent", html: "", streaming: true },
+      ],
+    };
+    let thinkTimer = null;
+    let streamTimers = [];
+
+    function dump() {
+      document.getElementById("stateDump").textContent =
+        "PROTOTYPE STATE\n" + JSON.stringify({ variant, ...state, composer: state.composer.slice(0, 40) }, null, 2);
+    }
+
+    function clearTimers() {
+      if (thinkTimer) clearTimeout(thinkTimer);
+      thinkTimer = null;
+      streamTimers.forEach(clearTimeout);
+      streamTimers = [];
+    }
+
+    function lastAgent() {
+      for (let i = state.turns.length - 1; i >= 0; i--) {
+        if (state.turns[i].kind === "agent") return state.turns[i];
+      }
+      return null;
+    }
+
+    function startTurn() {
+      state.phase = "thinking";
+      const agent = { kind: "agent", html: "", streaming: true };
+      state.turns.push(agent);
+      render();
+      thinkTimer = setTimeout(() => {
+        if (state.phase !== "thinking") return;
+        state.phase = "streaming";
+        let acc = "";
+        REPLY.forEach((chunk) => {
+          const id = setTimeout(() => {
+            if (state.phase !== "streaming") return;
+            acc += chunk.html;
+            agent.html = acc;
+            render();
+            if (chunk === REPLY[REPLY.length - 1]) {
+              state.phase = "idle";
+              agent.streaming = false;
+              drainPending();
+              render();
+            }
+          }, chunk.t);
+          streamTimers.push(id);
+        });
+        render();
+      }, 1100);
+    }
+
+    function drainPending() {
+      if (!state.pending) return;
+      const text = state.pending;
+      state.pending = null;
+      state.turns.push({ kind: "you", text });
+      startTurn();
+    }
+
+    function send(text) {
+      text = (text || state.composer).replace(/\s+$/, "");
+      if (!text) return;
+      if (state.phase !== "idle") {
+        state.pending = text;
+        state.composer = "";
+        render();
+        return;
+      }
+      state.composer = "";
+      state.turns.push({ kind: "you", text });
+      startTurn();
+      render();
+    }
+
+    function cancel() {
+      if (state.phase === "idle") return;
+      clearTimers();
+      const agent = lastAgent();
+      if (agent && !agent.html) {
+        agent.html = "<p><em>cancelled</em></p>";
+        agent.streaming = false;
+      } else if (agent) {
+        agent.streaming = false;
+      }
+      state.phase = "idle";
+      state.pending = null;
+      render();
+    }
+
+    function esc(s) {
+      return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+    }
+
+    function asciiBox(label, text, colorClass) {
+      const lines = String(text).split("\n");
+      const inner = Math.max(label.length + 2, ...lines.map((l) => l.length), 8);
+      const top = "+" + " " + label + " " + "-".repeat(Math.max(0, inner - label.length - 1)) + "+";
+      const mid = lines.map((l) => "| " + l.padEnd(inner, " ") + "|");
+      const bot = "+" + "-".repeat(inner + 2) + "+";
+      return `<pre class="${colorClass}">${esc([top, ...mid, bot].join("\n"))}</pre>`;
+    }
+
+    function thinkingVisible(t) {
+      return t === lastAgent() && state.phase === "thinking";
+    }
+
+    function thinkingHtml() {
+      if (variant === "C") return `<div class="thinking">* thinking<span class="dots"></span></div>`;
+      return `<div class="thinking">thinking<span class="dots"></span></div>`;
+    }
+
+    function agentHtml(t) {
+      if (state.phase === "thinking" && t === lastAgent() && !t.html) return "";
+      if (!t.html) return "";
+      return `<div class="agent-body">${t.html}</div>`;
+    }
+
+    function youHtml(text) {
+      if (variant === "A") {
+        return `<div class="you-block"><span class="you-tag">YOU</span>${esc(text)}</div>`;
+      }
+      if (variant === "B") {
+        return `<div class="you-wrap"><div class="you-square">${esc(text)}</div></div>`;
+      }
+      return asciiBox("YOU", text, "ascii");
+    }
+
+    function bannerHtml() {
+      const copy = {
+        A: "A · square cards · YOU is an empty box · BLUE rail",
+        B: "B · square cards · YOU is a RIGHT BLUE square",
+        C: "C · square cards · YOU is a BLUE ASCII box",
+      };
+      return `<div class="variant-banner">${copy[variant]}</div>`;
+    }
+
+    function transcriptHtml() {
+      const bits = [bannerHtml()];
+      for (const t of state.turns) {
+        bits.push(`<div class="turn">`);
+        if (t.kind === "you") bits.push(youHtml(t.text));
+        else {
+          if (thinkingVisible(t)) bits.push(thinkingHtml());
+          bits.push(agentHtml(t));
+        }
+        bits.push(`</div>`);
+      }
+      if (state.pending) {
+        if (variant === "A") bits.push(`<div class="pending-block">QUEUED · ${esc(state.pending)}</div>`);
+        else if (variant === "B") bits.push(`<div class="pending-wrap"><div class="pending-square">${esc(state.pending)}</div></div>`);
+        else bits.push(asciiBox("QUEUED", state.pending, "pending-ascii"));
+      }
+      return bits.join("");
+    }
+
+    function render() {
+      document.body.className = "var-" + variant.toLowerCase();
+      document.getElementById("switchLabel").textContent = variant + " (" + VARIANTS[variant] + ")";
+      document.getElementById("chatSplit").classList.toggle("hidden", !state.chatVisible);
+      const log = document.getElementById("log");
+      log.className = "a-transcript var-" + variant.toLowerCase();
+      log.innerHTML = transcriptHtml();
+      log.scrollTop = log.scrollHeight;
+      const ta = document.getElementById("composer");
+      if (ta.value !== state.composer) ta.value = state.composer;
+      const bits = ["Session"];
+      if (!state.chatVisible) bits.push("Chat hidden");
+      else if (state.phase === "thinking") bits.push("thinking");
+      else if (state.phase === "streaming") bits.push("in flight");
+      else bits.push("idle");
+      if (state.pending) bits.push("pending");
+      document.getElementById("topbarInfo").textContent = bits.join(" · ");
+      dump();
+    }
+
+    function setVariant(next) {
+      variant = next;
+      const url = new URL(location.href);
+      url.searchParams.set("variant", variant);
+      history.replaceState(null, "", url);
+      render();
+    }
+
+    function cycle(dir) {
+      const i = KEYS.indexOf(variant);
+      setVariant(KEYS[(i + dir + KEYS.length) % KEYS.length]);
+    }
+
+    document.getElementById("prev").onclick = () => cycle(-1);
+    document.getElementById("next").onclick = () => cycle(1);
+    document.querySelector('[data-act="nn"]').onclick = () => {
+      state.chatVisible = !state.chatVisible;
+      render();
+    };
+    document.querySelector('[data-act="nc"]').onclick = cancel;
+    document.querySelector('[data-act="demo"]').onclick = () => send("can you output a simple hello world script using C?");
+    document.getElementById("composer").addEventListener("input", (e) => {
+      state.composer = e.target.value;
+      dump();
+    });
+    document.getElementById("composer").addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        send();
+      }
+    });
+    document.addEventListener("keydown", (e) => {
+      const tag = e.target.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || e.target.isContentEditable) return;
+      if (e.key === "ArrowLeft") cycle(-1);
+      if (e.key === "ArrowRight") cycle(1);
+    });
+    render();
+  </script>
+</body>
+</html>
