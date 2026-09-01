@@ -9,8 +9,13 @@ Enhance from this note rather than re-litigating the layout. Open `lua/nvim_ai/p
 - **Columns, not a bottom split.** Code is the left window. Chat is a right-hand column (~30% of the frame at first open).
 - **Chat is two stacked cards** in that column: transcript above, Composer at the bottom. First open is empty. Turns stream in the transcript.
 - **Rounded cards** with a **shared 4px stroke** (`#7aa2f7`) on the editor, transcript, and Composer. No inner border on the Composer field. Gap between cards, not a hard window rule.
-- **Compact solid top bar** across the whole frame: `<leader>nn` hide/show, `<leader>nc` cancel, `<C-w>>` grow, `<C-w><` shrink. Right side is a Session slot (`idle` / `in flight` / later).
+- **Compact solid top bar** across the whole frame: `<leader>nn` hide/show, `<leader>nc` cancel, `<leader>nk` command cheatsheet, `<C-w>>` grow, `<C-w><` shrink. Right side is a Session slot: **idle** / **in flight** / **pending**. No model name, tokens, or extras this ship.
+- **Enter** sends. **Shift-Enter** inserts a newline in the Composer.
+- **Hide** (`<leader>nn`) puts focus on the **code column** (last non-Chat window).
 - **Grow the Chat column with Vim**, not a drag gutter: `<C-w>>` / `<C-w><` (or `:vert resize`). Same as any vsplit.
+- **Command cheatsheet** (`<leader>nk`, Normal): read-only float centered on the frame, same rounded 4px stroke. Chat commands only. Esc or `nk` closes it. Opens even if Chat is hidden; does not toggle Chat. Leave Insert in the Composer first. See [How does Chat show a glossary of commands?](https://linear.app/johnspence/issue/JOH-68/how-does-chat-show-a-glossary-of-commands).
+- **Agent markdown** after the turn finishes (including cancel): headings, lists, emphasis, inline code, fenced code. No images, no tables. You and pending stay as typed. Streaming is plain. See [Does the Chat transcript render markdown?](https://linear.app/johnspence/issue/JOH-69/does-the-chat-transcript-render-markdown).
+- **Column width** after `<C-w>>` / `<C-w><` survives `<leader>nn` hide for this Neovim process. A new Profile launch is ~30% again. See [Does the Chat column's width survive hide?](https://linear.app/johnspence/issue/JOH-70/does-the-chat-columns-width-survive-hide).
 
 Queue behaviour is not look: see [How does Chat queue a turn while one is in flight?](https://linear.app/johnspence/issue/JOH-66/how-does-chat-queue-a-turn-while-one-is-in-flight).
 
@@ -24,9 +29,4 @@ Queue behaviour is not look: see [How does Chat queue a turn while one is in fli
 
 ## Later, without reopening the layout
 
-- Command glossary popup — [How does Chat show a glossary of commands?](https://linear.app/johnspence/issue/JOH-68/how-does-chat-show-a-glossary-of-commands)
-- Transcript markdown
-- Whether `<C-w>>` width survives hide (`<leader>nn`)
-- Where focus goes when Chat hides
-- Newline mapping (which key inserts a line)
-- What else the top bar's Session slot shows
+Nothing further for this ship. Execution is [Ship Chat in the Profile](https://linear.app/johnspence/issue/JOH-71/ship-chat-in-the-profile).

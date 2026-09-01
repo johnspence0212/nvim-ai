@@ -28,6 +28,10 @@ _Avoid_: Session, scratch buffer, conversation, thread
 The input at the bottom of Chat where you type the next turn.
 _Avoid_: input box, prompt, cmdline
 
+**Command cheatsheet**:
+A read-only popup of Chat commands. Distinct from this file's Language list.
+_Avoid_: glossary, help, which-key
+
 **Agent Workspace**:
 One Linear issue's isolated Git working directory, dedicated branch, Session, and lifecycle metadata. Distinct from the Profile. A Git worktree is one possible implementation, not the product.
 _Avoid_: worktree, Profile
