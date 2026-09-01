@@ -65,6 +65,7 @@ local function style()
   vim.api.nvim_set_hl(0, "NaiMdBold", { fg = CARD_FG, bg = CARD_BG, bold = true })
   vim.api.nvim_set_hl(0, "NaiMdItalic", { fg = CARD_FG, bg = CARD_BG, italic = true })
   vim.api.nvim_set_hl(0, "NaiMdCode", { fg = "#9ece6a", bg = "#292e42" })
+  vim.api.nvim_set_hl(0, "NaiMdFence", { fg = "#9ece6a", bg = "#292e42" })
   vim.api.nvim_set_hl(0, "NaiMdList", { fg = STROKE, bg = CARD_BG })
 end
 
@@ -582,11 +583,18 @@ function M.finish_agent()
   stream_row = agent_start + #out - 1
   vim.api.nvim_buf_clear_namespace(transcript_buf, md_ns, agent_start, stream_row + 1)
   for _, mark in ipairs(marks) do
-    pcall(vim.api.nvim_buf_set_extmark, transcript_buf, md_ns, agent_start + mark.row, mark.col, {
-      end_row = agent_start + mark.row,
-      end_col = mark.end_col,
-      hl_group = mark.hl,
-    })
+    if mark.line then
+      pcall(vim.api.nvim_buf_set_extmark, transcript_buf, md_ns, agent_start + mark.row, 0, {
+        line_hl_group = mark.hl,
+        hl_eol = true,
+      })
+    else
+      pcall(vim.api.nvim_buf_set_extmark, transcript_buf, md_ns, agent_start + mark.row, mark.col, {
+        end_row = agent_start + mark.row,
+        end_col = mark.end_col,
+        hl_group = mark.hl,
+      })
+    end
   end
   vim.bo[transcript_buf].modifiable = false
   agent_plain = false

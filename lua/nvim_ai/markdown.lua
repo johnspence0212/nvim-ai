@@ -105,18 +105,25 @@ function M.render(src)
   while i <= #raw do
     local line = raw[i]
     if line:match("^```") then
+      local body = {}
       i = i + 1
       while i <= #raw and not raw[i]:match("^```") do
-        local row = #out
-        out[#out + 1] = raw[i]
-        if raw[i] ~= "" then
-          marks[#marks + 1] = { row = row, col = 0, end_col = #raw[i], hl = "NaiMdCode" }
-        end
+        body[#body + 1] = raw[i]
         i = i + 1
       end
       if i <= #raw then
         i = i + 1
       end
+      local function fence_line(text)
+        local row = #out
+        out[#out + 1] = "  " .. text
+        marks[#marks + 1] = { row = row, line = true, hl = "NaiMdFence" }
+      end
+      fence_line("")
+      for _, body_line in ipairs(body) do
+        fence_line(body_line)
+      end
+      fence_line("")
     elseif line:match("^|") or line:match("^!%[") then
       out[#out + 1] = line
       i = i + 1
