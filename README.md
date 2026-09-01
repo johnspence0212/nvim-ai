@@ -1,6 +1,6 @@
 # nvim-ai
 
-An isolated Neovim Profile (`NVIM_APPNAME=nvim-ai`) on LazyVim. Distinct from a default Neovim configuration (`nvim` still opens that one). Cursor Agent is the AI runtime, wired later via ACP. `:Nai` is this Profile's command.
+An isolated Neovim Profile (`NVIM_APPNAME=nvim-ai`). Distinct from a default Neovim configuration (`nvim` still opens that one). Cursor Agent is the AI runtime, wired later via ACP. `:Nai` is this Profile's command.
 
 Keep the git clone where it is. Neovim finds this Profile through `NVIM_APPNAME`, not by moving the repo.
 
@@ -14,11 +14,14 @@ New-Item -ItemType Junction -Path "$env:LOCALAPPDATA\nvim-ai" -Target "<path-to-
 
 Skip this if `$env:LOCALAPPDATA\nvim-ai` already points at the clone.
 
-**Unix** — symlink:
+**Unix** — two symlinks (stdpath, then launcher on `PATH`):
 
 ```bash
 ln -s /path/to/nvim-ai ~/.config/nvim-ai
+ln -s /path/to/nvim-ai/nvim-ai ~/.local/bin/nvim-ai
 ```
+
+Skip these if they already point at the clone. Do not add `~/.config` to `PATH`.
 
 ## Launch
 
@@ -28,6 +31,8 @@ ln -s /path/to/nvim-ai ~/.config/nvim-ai
 nvim-ai .
 ```
 
-That works once this clone's directory is on your `PATH` (on this machine, `%LOCALAPPDATA%\nvim-ai` via the junction). `nvim-ai.cmd` / `nvim-ai` set `NVIM_APPNAME=nvim-ai` and exec `nvim`.
+`nvim-ai.cmd` / `nvim-ai` set `NVIM_APPNAME=nvim-ai` and exec `nvim`.
+
+On Windows that works once the junction directory is on `PATH` (`%LOCALAPPDATA%\nvim-ai`). On Unix, `~/.local/bin` is already on `PATH`; the launcher symlink above is enough.
 
 Repo-local shortcuts still work: `.\nai.ps1 .` / `./nai .`.
