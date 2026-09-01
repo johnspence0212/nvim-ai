@@ -21,8 +21,12 @@ One ACP connection between the Profile and Cursor Agent. The Profile holds at mo
 _Avoid_: conversation, thread, Chat
 
 **Chat**:
-The Profile's UI for one Session: a composer you type in, and a transcript of turns above it. Distinct from Session.
+The Profile's UI for one Session: a composer you type in, and a transcript of turns above it. Distinct from Session. Distinct from Code.
 _Avoid_: Session, scratch buffer, conversation, thread
+
+**Code**:
+The Profile's file-editing surface. Opt-in beside Chat; not a standing column.
+_Avoid_: editor, pane, column, buffer
 
 **Composer**:
 The input at the bottom of Chat where you type the next turn.
