@@ -6,6 +6,9 @@ local STROKE = "#7aa2f7"
 local CARD_BG = "#1a1b26"
 local CARD_FG = "#c0caf5"
 local LINE_NR = "#3b4261"
+local YOU = "#7aa2f7"
+local QUEUED = "#e0af68"
+local MUTED = "#565f89"
 local TOPBAR_BG = "#3d59a1"
 local COLUMN_FRACTION = 0.3
 local COMPOSER_INNER = 12
@@ -47,6 +50,10 @@ local stream_row
 local agent_start
 local agent_plain
 local md_ns
+local turn_ns
+local pending_ns
+local thinking_ns
+local thinking
 local composer_maps_buf
 local wire_composer
 
@@ -67,6 +74,13 @@ local function style()
   vim.api.nvim_set_hl(0, "NaiMdCode", { fg = "#9ece6a", bg = "#292e42" })
   vim.api.nvim_set_hl(0, "NaiMdFence", { fg = "#9ece6a", bg = "#292e42" })
   vim.api.nvim_set_hl(0, "NaiMdList", { fg = STROKE, bg = CARD_BG })
+  vim.api.nvim_set_hl(0, "NaiYouRail", { fg = YOU, bg = YOU })
+  vim.api.nvim_set_hl(0, "NaiYouTag", { fg = YOU, bg = CARD_BG })
+  vim.api.nvim_set_hl(0, "NaiYouBox", { fg = LINE_NR, bg = CARD_BG })
+  vim.api.nvim_set_hl(0, "NaiQueuedRail", { fg = QUEUED, bg = QUEUED })
+  vim.api.nvim_set_hl(0, "NaiQueued", { fg = QUEUED, bg = CARD_BG })
+  vim.api.nvim_set_hl(0, "NaiQueuedBox", { fg = LINE_NR, bg = CARD_BG })
+  vim.api.nvim_set_hl(0, "NaiThinking", { fg = MUTED, bg = CARD_BG, italic = true })
 end
 
 local function configure_buf(buf, name)
@@ -230,7 +244,7 @@ local function float_opts(rect, extra)
     col = rect.col,
     width = rect.width,
     height = rect.height,
-    border = "rounded",
+    border = "single",
     zindex = 50,
     focusable = true,
   }
@@ -511,6 +525,97 @@ local function scroll_transcript()
   end
 end
 
+local function ensure_turn_ns()
+  if not turn_ns then
+    turn_ns = vim.api.nvim_create_namespace("nai_turn")
+  end
+  if not pending_ns then
+    pending_ns = vim.api.nvim_create_namespace("nai_pending")
+  end
+  if not thinking_ns then
+    thinking_ns = vim.api.nvim_create_namespace("nai_thinking")
+  end
+end
+
+local function box_rule()
+  local w = 24
+  if win_ok(transcript_win) then
+    w = math.max(8, vim.api.nvim_win_get_width(transcript_win) - 1)
+  end
+  return string.rep("─", w)
+end
+
+local function mark_rail(ns, row, hl)
+  vim.api.nvim_buf_set_extmark(transcript_buf, ns, row, 0, {
+    virt_text = { { " ", hl } },
+    virt_text_pos = "inline",
+    right_gravity = false,
+  })
+end
+
+local function mark_span(ns, row, line, hl)
+  if line == "" then
+    return
+  end
+  vim.api.nvim_buf_set_extmark(transcript_buf, ns, row, 0, {
+    end_row = row,
+    end_col = #line,
+    hl_group = hl,
+  })
+end
+
+local function paint_block(ns, start, len, rail_hl, tag_hl, body_hl, box_hl)
+  local lines = vim.api.nvim_buf_get_lines(transcript_buf, start, start + len, false)
+  local rule = box_rule()
+  for i, line in ipairs(lines) do
+    local row = start + i - 1
+    mark_rail(ns, row, rail_hl)
+    vim.api.nvim_buf_set_extmark(transcript_buf, ns, row, 0, {
+      virt_text = { { "│", box_hl } },
+      virt_text_pos = "eol",
+    })
+    if i == 1 then
+      vim.api.nvim_buf_set_extmark(transcript_buf, ns, row, 0, {
+        virt_lines_above = true,
+        virt_lines = { { { rule, box_hl } } },
+      })
+      mark_span(ns, row, line, tag_hl)
+    end
+    if i == #lines then
+      vim.api.nvim_buf_set_extmark(transcript_buf, ns, row, 0, {
+        virt_lines = { { { rule, box_hl } } },
+      })
+    end
+    if i > 1 and body_hl then
+      mark_span(ns, row, line, body_hl)
+    end
+  end
+end
+
+local function paint_you(start, len)
+  ensure_turn_ns()
+  paint_block(turn_ns, start, len, "NaiYouRail", "NaiYouTag", nil, "NaiYouBox")
+end
+
+local function paint_queued(start, len)
+  ensure_turn_ns()
+  vim.api.nvim_buf_clear_namespace(transcript_buf, pending_ns, 0, -1)
+  paint_block(pending_ns, start, len, "NaiQueuedRail", "NaiQueued", "NaiQueued", "NaiQueuedBox")
+end
+
+local function paint_thinking(row)
+  ensure_turn_ns()
+  local line = vim.api.nvim_buf_get_lines(transcript_buf, row, row + 1, false)[1] or ""
+  mark_span(thinking_ns, row, line, "NaiThinking")
+end
+
+local function clear_thinking()
+  thinking = false
+  if thinking_ns and transcript_buf and vim.api.nvim_buf_is_valid(transcript_buf) then
+    vim.api.nvim_buf_clear_namespace(transcript_buf, thinking_ns, 0, -1)
+  end
+end
+
 function M.start_turn(text)
   ensure_bufs()
   vim.bo[transcript_buf].modifiable = true
@@ -520,15 +625,20 @@ function M.start_turn(text)
   if #body == 0 then
     body = { "" }
   end
-  local block = { "You" }
+  local you = { "YOU" }
   for _, line in ipairs(body) do
+    you[#you + 1] = line
+  end
+  local block = {}
+  for _, line in ipairs(you) do
     block[#block + 1] = line
   end
   block[#block + 1] = ""
-  block[#block + 1] = "Agent"
-  block[#block + 1] = ""
+  block[#block + 1] = "thinking..."
+  local you_start
   if empty then
     vim.api.nvim_buf_set_lines(transcript_buf, 0, -1, false, block)
+    you_start = 0
     stream_row = #block - 1
   else
     local count = vim.api.nvim_buf_line_count(transcript_buf)
@@ -537,10 +647,14 @@ function M.start_turn(text)
       appended[#appended + 1] = line
     end
     vim.api.nvim_buf_set_lines(transcript_buf, -1, -1, false, appended)
+    you_start = count + 1
     stream_row = count + #appended - 1
   end
   agent_start = stream_row
   agent_plain = true
+  thinking = true
+  paint_you(you_start, #you)
+  paint_thinking(stream_row)
   vim.bo[transcript_buf].modifiable = false
   scroll_transcript()
 end
@@ -551,9 +665,19 @@ function M.append_agent(chunk)
     stream_row = vim.api.nvim_buf_line_count(transcript_buf) - 1
   end
   vim.bo[transcript_buf].modifiable = true
-  local line = vim.api.nvim_buf_get_lines(transcript_buf, stream_row, stream_row + 1, false)[1] or ""
-  local parts = vim.split(line .. chunk, "\n", { plain = true })
-  vim.api.nvim_buf_set_lines(transcript_buf, stream_row, stream_row + 1, false, parts)
+  local parts
+  if thinking then
+    clear_thinking()
+    parts = vim.split(chunk, "\n", { plain = true })
+    if #parts == 0 then
+      parts = { "" }
+    end
+    vim.api.nvim_buf_set_lines(transcript_buf, stream_row, stream_row + 1, false, parts)
+  else
+    local line = vim.api.nvim_buf_get_lines(transcript_buf, stream_row, stream_row + 1, false)[1] or ""
+    parts = vim.split(line .. chunk, "\n", { plain = true })
+    vim.api.nvim_buf_set_lines(transcript_buf, stream_row, stream_row + 1, false, parts)
+  end
   local extra = #parts - 1
   if extra > 0 and pending_start then
     pending_start = pending_start + extra
@@ -568,13 +692,22 @@ function M.finish_agent()
     return
   end
   ensure_bufs()
+  vim.bo[transcript_buf].modifiable = true
+  if thinking then
+    vim.api.nvim_buf_set_lines(transcript_buf, stream_row, stream_row + 1, false, { "" })
+    clear_thinking()
+  end
   if not md_ns then
     md_ns = vim.api.nvim_create_namespace("nai_agent_md")
   end
   local src_lines = vim.api.nvim_buf_get_lines(transcript_buf, agent_start, stream_row + 1, false)
   local src = table.concat(src_lines, "\n")
+  if src == "" then
+    vim.bo[transcript_buf].modifiable = false
+    agent_plain = false
+    return
+  end
   local out, marks = markdown.render(src)
-  vim.bo[transcript_buf].modifiable = true
   vim.api.nvim_buf_set_lines(transcript_buf, agent_start, stream_row + 1, false, out)
   local extra = #out - #src_lines
   if extra ~= 0 and pending_start then
@@ -612,7 +745,7 @@ function M.set_pending(text)
   if #body == 0 then
     body = { "" }
   end
-  local block = { "Pending" }
+  local block = { "QUEUED" }
   for _, line in ipairs(body) do
     block[#block + 1] = line
   end
@@ -636,6 +769,7 @@ function M.set_pending(text)
     end
   end
   pending_len = #block
+  paint_queued(pending_start, pending_len)
   vim.bo[transcript_buf].modifiable = false
   scroll_transcript()
 end
@@ -646,6 +780,8 @@ function M.drop_pending()
     pending_len = nil
     return
   end
+  ensure_turn_ns()
+  vim.api.nvim_buf_clear_namespace(transcript_buf, pending_ns, 0, -1)
   vim.bo[transcript_buf].modifiable = true
   local start = pending_start
   if start > 0 then
@@ -685,7 +821,7 @@ function M.setup()
   style()
   vim.o.showtabline = 2
   vim.o.tabline = "%!v:lua.require('nvim_ai.ui').tabline()"
-  vim.o.winborder = "rounded"
+  vim.o.winborder = "single"
   vim.o.equalalways = false
   local group = vim.api.nvim_create_augroup("NaiChatLayout", { clear = true })
   vim.api.nvim_create_autocmd("WinEnter", {
