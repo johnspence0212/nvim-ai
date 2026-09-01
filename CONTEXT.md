@@ -19,3 +19,7 @@ _Avoid_: LSP, MCP
 **Session**:
 One ACP connection between the Profile and Cursor Agent. The Profile holds at most one at a time.
 _Avoid_: conversation, chat, thread
+
+**Agent Workspace**:
+One Linear issue's isolated Git working directory, dedicated branch, Session, and lifecycle metadata. Distinct from the Profile. A Git worktree is one possible implementation, not the product.
+_Avoid_: worktree, Profile
