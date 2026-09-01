@@ -13,7 +13,10 @@ local TOPBAR_BG = "#3d59a1"
 local COMPOSER_INNER = 6
 local EDGE = 1
 local GAP = 1
+local FRAME_PAD = 2
 local BORDER = 2
+local SIDE_FRACTION = 0.1
+local STRIP_H = 1
 local CHEATSHEET_Z = 60
 local CHEATSHEET_LINES = {
   "Command cheatsheet",
@@ -76,8 +79,10 @@ local transcript_buf
 local composer_buf
 local backdrop_buf
 local cheatsheet_buf
+local command_buf
 local transcript_win
 local composer_win
+local command_win
 local editor_win
 local cheatsheet_win
 local code_win
@@ -150,6 +155,11 @@ local function ensure_bufs()
   if not (backdrop_buf and vim.api.nvim_buf_is_valid(backdrop_buf)) then
     backdrop_buf = vim.api.nvim_create_buf(false, true)
     configure_buf(backdrop_buf, "nai://backdrop")
+  end
+  if not (command_buf and vim.api.nvim_buf_is_valid(command_buf)) then
+    command_buf = vim.api.nvim_create_buf(false, true)
+    configure_buf(command_buf, "nai://commands")
+    vim.bo[command_buf].modifiable = false
   end
 end
 
@@ -254,16 +264,19 @@ local TRANSCRIPT_FLOAT = {
   style = "minimal",
   title = " Chat ",
   title_pos = "left",
-  footer = " ",
-  footer_pos = "left",
 }
 
 local COMPOSER_FLOAT = {
   style = "minimal",
-  title = " Composer ",
+  title = " Build ",
   title_pos = "left",
-  footer = " Enter send ",
-  footer_pos = "left",
+}
+
+local COMMAND_FLOAT = {
+  style = "minimal",
+  border = "none",
+  focusable = false,
+  zindex = 55,
 }
 
 -- Border is drawn outside (row, col). Convert an outer box (including
@@ -279,28 +292,34 @@ end
 
 local function layout_rects()
   local cmd = vim.o.cmdheight
-  -- Chat-only: no top bar. EDGE is the margin; GAP is the gutter between cards.
-  local grid_top = EDGE
-  local grid_left = EDGE
-  local grid_bottom = vim.o.lines - 1 - cmd - EDGE
-  local grid_right = vim.o.columns - 1 - EDGE
-  local grid_h = math.max(4, grid_bottom - grid_top + 1)
-  local grid_w = math.max(8, grid_right - grid_left + 1)
+  local tab = vim.o.showtabline == 0 and 0 or 1
+  local status = vim.o.laststatus == 0 and 0 or 1
+  -- Header, pad, Chat, Build, same pad, full-width footer.
+  local grid_top = tab + FRAME_PAD
+  local grid_bottom = vim.o.lines - 1 - cmd - status
+  local side = math.max(0, math.floor(vim.o.columns * SIDE_FRACTION))
+  local chat_w = math.max(8, vim.o.columns - side * 2)
+  local grid_left = side
 
   local composer_h = COMPOSER_INNER + BORDER
-  if composer_h + GAP + BORDER + 1 > grid_h then
-    composer_h = math.max(BORDER + 1, math.floor(grid_h / 3))
+  local strip_r = grid_bottom - STRIP_H + 1
+  local composer_r = strip_r - FRAME_PAD - composer_h
+  local transcript_h = composer_r - GAP - grid_top
+  if transcript_h < BORDER + 1 then
+    composer_h = math.max(BORDER + 1, math.floor((grid_bottom - grid_top + 1) / 3))
+    composer_r = strip_r - FRAME_PAD - composer_h
+    transcript_h = math.max(BORDER + 1, composer_r - GAP - grid_top)
   end
-  local transcript_h = grid_h - GAP - composer_h
 
   return {
-    transcript = outer_to_nvim({ r = grid_top, c = grid_left, w = grid_w, h = transcript_h }),
+    transcript = outer_to_nvim({ r = grid_top, c = grid_left, w = chat_w, h = transcript_h }),
     composer = outer_to_nvim({
-      r = grid_top + transcript_h + GAP,
+      r = composer_r,
       c = grid_left,
-      w = grid_w,
+      w = chat_w,
       h = composer_h,
     }),
+    command = { row = strip_r, col = 0, width = vim.o.columns, height = STRIP_H },
   }
 end
 
@@ -355,6 +374,9 @@ local function relayout()
   end
   local rects = layout_rects()
   place(transcript_win, transcript_buf, rects.transcript, TRANSCRIPT_FLOAT, false)
+  command_win = place(command_win, command_buf, rects.command, COMMAND_FLOAT, false)
+  apply_command_strip(command_win)
+  paint_command_strip()
   place(composer_win, composer_buf, rects.composer, COMPOSER_FLOAT, false)
 end
 
@@ -379,7 +401,8 @@ local function bounce_backdrop()
   if not win_ok(cur) then
     return
   end
-  if vim.api.nvim_win_get_buf(cur) == backdrop_buf and win_ok(composer_win) then
+  local buf = vim.api.nvim_win_get_buf(cur)
+  if (buf == backdrop_buf or buf == command_buf) and win_ok(composer_win) then
     vim.api.nvim_set_current_win(composer_win)
   end
 end
@@ -411,9 +434,58 @@ local function capture_waiting()
 end
 
 function M.tabline()
-  local left =
-    " <leader>nn hide/show  <leader>nc cancel  <leader>nk cheatsheet  <C-w>> grow  <C-w>< shrink "
-  return "%#NaiTopBar#" .. left .. "%=%#TabLineFill# Session · " .. session_slot .. " "
+  return "%#NaiTopBar#%=" .. "%#TabLineFill# Session · " .. session_slot .. " "
+end
+
+local function mode_label()
+  local m = vim.fn.mode()
+  if m == "i" or m == "ic" or m == "ix" then
+    return "INSERT"
+  end
+  if m == "c" then
+    return "COMMAND"
+  end
+  if m == "v" or m == "V" or m == "\22" then
+    return "VISUAL"
+  end
+  return "NORMAL"
+end
+
+local function command_line()
+  return " "
+    .. mode_label()
+    .. "   Enter send   Shift-Enter newline   <leader>nn reserved   <leader>nc reserved   <leader>nq cancel   <leader>nk cheatsheet"
+end
+
+local function paint_command_strip()
+  if not command_buf or not vim.api.nvim_buf_is_valid(command_buf) then
+    return
+  end
+  local text = command_line()
+  local width = vim.o.columns
+  local pad = width - vim.fn.strdisplaywidth(text)
+  if pad > 0 then
+    text = text .. string.rep(" ", pad)
+  elseif pad < 0 then
+    text = vim.fn.strcharpart(text, 0, width)
+  end
+  vim.bo[command_buf].modifiable = true
+  vim.api.nvim_buf_set_lines(command_buf, 0, -1, false, { text })
+  vim.bo[command_buf].modifiable = false
+end
+
+local function apply_command_strip(win)
+  vim.wo[win].winhighlight = "Normal:NaiTopBar,EndOfBuffer:NaiTopBar"
+  vim.wo[win].number = false
+  vim.wo[win].relativenumber = false
+  vim.wo[win].signcolumn = "no"
+  vim.wo[win].foldcolumn = "0"
+  vim.wo[win].cursorline = false
+  vim.wo[win].wrap = false
+  vim.wo[win].winblend = 0
+  pcall(function()
+    vim.wo[win].winborder = "none"
+  end)
 end
 
 function M.show()
@@ -433,9 +505,11 @@ function M.show()
     if saved_ruler == nil then
       saved_ruler = vim.o.ruler
     end
-    vim.o.showtabline = 0
+    vim.o.showtabline = 2
     vim.o.laststatus = 0
     vim.o.ruler = false
+    vim.o.showmode = false
+    vim.o.tabline = "%!v:lua.require('nvim_ai.ui').tabline()"
 
     local root = root_win()
     vim.api.nvim_win_set_buf(root, backdrop_buf)
@@ -445,6 +519,9 @@ function M.show()
     transcript_win = place(transcript_win, transcript_buf, rects.transcript, TRANSCRIPT_FLOAT, false)
     apply_card(transcript_win, { minimal = true, pad = true })
     vim.wo[transcript_win].breakindent = true
+    command_win = place(command_win, command_buf, rects.command, COMMAND_FLOAT, false)
+    apply_command_strip(command_win)
+    paint_command_strip()
     composer_win = place(composer_win, composer_buf, rects.composer, COMPOSER_FLOAT, false)
     apply_card(composer_win, { minimal = true, pad = true })
     focus_composer()
@@ -873,13 +950,20 @@ end
 
 function M.setup()
   style()
-  vim.o.showtabline = 0
+  vim.o.showtabline = 2
+  vim.o.laststatus = 0
+  vim.o.showmode = false
+  vim.o.tabline = "%!v:lua.require('nvim_ai.ui').tabline()"
   vim.o.winborder = "single"
   vim.o.equalalways = false
   local group = vim.api.nvim_create_augroup("NaiChatLayout", { clear = true })
   vim.api.nvim_create_autocmd("WinEnter", {
     group = group,
     callback = bounce_backdrop,
+  })
+  vim.api.nvim_create_autocmd("ModeChanged", {
+    group = group,
+    callback = paint_command_strip,
   })
   vim.api.nvim_create_autocmd("VimResized", {
     group = group,
