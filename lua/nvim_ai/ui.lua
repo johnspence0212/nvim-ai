@@ -26,9 +26,9 @@ local function style()
   vim.api.nvim_set_hl(0, "TabLine", { bg = TOPBAR_BG, fg = "#ffffff" })
   vim.api.nvim_set_hl(0, "TabLineFill", { bg = TOPBAR_BG, fg = "#c0caf5" })
   vim.api.nvim_set_hl(0, "TabLineSel", { bg = TOPBAR_BG, fg = "#ffffff" })
-  vim.api.nvim_set_hl(0, "NaiStroke", { fg = STROKE, bg = STROKE, bold = true })
-  vim.api.nvim_set_hl(0, "FloatBorder", { fg = STROKE, bg = STROKE, bold = true })
-  vim.api.nvim_set_hl(0, "WinBorder", { fg = STROKE, bg = STROKE, bold = true })
+  vim.api.nvim_set_hl(0, "NaiStroke", { fg = STROKE, bg = "NONE", bold = true })
+  vim.api.nvim_set_hl(0, "FloatBorder", { fg = STROKE, bg = "NONE", bold = true })
+  vim.api.nvim_set_hl(0, "WinBorder", { fg = STROKE, bg = "NONE", bold = true })
 end
 
 local function configure_buf(buf, name)
