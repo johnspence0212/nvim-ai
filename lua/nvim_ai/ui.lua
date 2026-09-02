@@ -105,6 +105,8 @@ local thinking_ns
 local thinking
 local composer_maps_buf
 local wire_composer
+local paint_command_strip
+local apply_command_strip
 
 local function style()
   vim.opt.termguicolors = true
@@ -457,7 +459,7 @@ local function command_line()
     .. "   Enter send   Shift-Enter newline   <leader>nn reserved   <leader>nc reserved   <leader>nq cancel   <leader>nk cheatsheet"
 end
 
-local function paint_command_strip()
+paint_command_strip = function()
   if not command_buf or not vim.api.nvim_buf_is_valid(command_buf) then
     return
   end
@@ -474,7 +476,7 @@ local function paint_command_strip()
   vim.bo[command_buf].modifiable = false
 end
 
-local function apply_command_strip(win)
+apply_command_strip = function(win)
   vim.wo[win].winhighlight = "Normal:NaiTopBar,EndOfBuffer:NaiTopBar"
   vim.wo[win].number = false
   vim.wo[win].relativenumber = false
