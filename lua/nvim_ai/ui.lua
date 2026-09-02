@@ -85,9 +85,8 @@ local composer_win
 local command_win
 local editor_win
 local cheatsheet_win
-local code_win
 local code_buf
-local remembered_width
+local code_open = false
 local session_slot = "idle"
 local layout_lock = false
 local saved_laststatus
@@ -105,6 +104,8 @@ local thinking_ns
 local thinking
 local composer_maps_buf
 local wire_composer
+local paint_command_strip
+local apply_command_strip
 
 local function style()
   vim.opt.termguicolors = true
@@ -190,6 +191,10 @@ local function visible()
   return win_ok(transcript_win) and win_ok(composer_win)
 end
 
+local function is_code_win(win)
+  return win == editor_win
+end
+
 local function cmd_head(line)
   local s = line:gsub("^%s+", ""):gsub("^:+", "")
   s = s:gsub("^[-%%$.0-9,'<>]+", ""):gsub("^%s+", "")
@@ -210,12 +215,27 @@ local function is_qall(name)
     or name == "cquit"
 end
 
+local function is_code_quit(line)
+  local name = cmd_head(line)
+  if name ~= "q" and name ~= "quit" and name ~= "close" and name ~= "clo" then
+    return false
+  end
+  return code_open and is_code_win(vim.api.nvim_get_current_win())
+end
+
 local function block_ex(line)
   local name = cmd_head(line)
   if name == "" or is_qall(name) then
     return false
   end
-  return FILE_EX[name] == true or QUIT_EX[name] == true
+  local cur = vim.api.nvim_get_current_win()
+  if FILE_EX[name] == true then
+    return not (code_open and is_code_win(cur))
+  end
+  if QUIT_EX[name] == true then
+    return true
+  end
+  return false
 end
 
 local function close_win(win)
@@ -260,6 +280,17 @@ local function apply_card(win, opts)
   end
 end
 
+local function apply_code(win)
+  apply_card(win, { minimal = false })
+  vim.wo[win].wrap = false
+  vim.wo[win].number = true
+  vim.wo[win].relativenumber = false
+  vim.wo[win].signcolumn = "yes"
+  vim.wo[win].cursorline = true
+  vim.wo[win].statuscolumn = ""
+  vim.wo[win].winbar = ""
+end
+
 local TRANSCRIPT_FLOAT = {
   style = "minimal",
   title = " Chat ",
@@ -279,6 +310,12 @@ local COMMAND_FLOAT = {
   zindex = 55,
 }
 
+local CODE_FLOAT = {
+  style = "minimal",
+  title = " Code ",
+  title_pos = "left",
+}
+
 -- Border is drawn outside (row, col). Convert an outer box (including
 -- border) on the screen grid into nvim_open_win's inner content rect.
 local function outer_to_nvim(box)
@@ -294,15 +331,10 @@ local function layout_rects()
   local cmd = vim.o.cmdheight
   local tab = vim.o.showtabline == 0 and 0 or 1
   local status = vim.o.laststatus == 0 and 0 or 1
-  -- Header, pad, Chat, Build, same pad, full-width footer.
   local grid_top = tab + FRAME_PAD
   local grid_bottom = vim.o.lines - 1 - cmd - status
-  local side = math.max(0, math.floor(vim.o.columns * SIDE_FRACTION))
-  local chat_w = math.max(8, vim.o.columns - side * 2)
-  local grid_left = side
-
-  local composer_h = COMPOSER_INNER + BORDER
   local strip_r = grid_bottom - STRIP_H + 1
+  local composer_h = COMPOSER_INNER + BORDER
   local composer_r = strip_r - FRAME_PAD - composer_h
   local transcript_h = composer_r - GAP - grid_top
   if transcript_h < BORDER + 1 then
@@ -311,11 +343,32 @@ local function layout_rects()
     transcript_h = math.max(BORDER + 1, composer_r - GAP - grid_top)
   end
 
+  local chat_c
+  local chat_w
+  local editor
+  if code_open then
+    local inner = math.max(8, vim.o.columns - GAP)
+    local code_w = math.max(8, math.floor(inner / 2))
+    chat_w = math.max(8, inner - code_w)
+    chat_c = code_w + GAP
+    editor = outer_to_nvim({
+      r = grid_top,
+      c = 0,
+      w = code_w,
+      h = composer_r + composer_h - grid_top,
+    })
+  else
+    local side = math.max(0, math.floor(vim.o.columns * SIDE_FRACTION))
+    chat_w = math.max(8, vim.o.columns - side * 2)
+    chat_c = side
+  end
+
   return {
-    transcript = outer_to_nvim({ r = grid_top, c = grid_left, w = chat_w, h = transcript_h }),
+    editor = editor,
+    transcript = outer_to_nvim({ r = grid_top, c = chat_c, w = chat_w, h = transcript_h }),
     composer = outer_to_nvim({
       r = composer_r,
-      c = grid_left,
+      c = chat_c,
       w = chat_w,
       h = composer_h,
     }),
@@ -368,11 +421,72 @@ local function place(win, buf, rect, extra, enter)
   return vim.api.nvim_open_win(buf, enter, opts)
 end
 
+local function is_plain_file_buf(buf)
+  if not vim.api.nvim_buf_is_valid(buf) then
+    return false
+  end
+  if not vim.bo[buf].buflisted then
+    return false
+  end
+  if vim.bo[buf].buftype ~= "" then
+    return false
+  end
+  if vim.bo[buf].filetype == "netrw" then
+    return false
+  end
+  return true
+end
+
+local function listed_unnamed()
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if is_plain_file_buf(buf) and vim.api.nvim_buf_get_name(buf) == "" then
+      return buf
+    end
+  end
+end
+
+local function next_listed_file(skip)
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if buf ~= skip and is_plain_file_buf(buf) then
+      return buf
+    end
+  end
+end
+
+local function ensure_code_buf()
+  if code_buf and vim.api.nvim_buf_is_valid(code_buf) then
+    return code_buf
+  end
+  local unnamed = listed_unnamed()
+  if unnamed then
+    code_buf = unnamed
+    return code_buf
+  end
+  code_buf = vim.api.nvim_create_buf(true, false)
+  return code_buf
+end
+
+local function remember_code_buf()
+  if win_ok(editor_win) then
+    local buf = vim.api.nvim_win_get_buf(editor_win)
+    if vim.api.nvim_buf_is_valid(buf) then
+      code_buf = buf
+    end
+  end
+end
+
 local function relayout()
   if not visible() then
     return
   end
   local rects = layout_rects()
+  if code_open and rects.editor then
+    editor_win = place(editor_win, ensure_code_buf(), rects.editor, CODE_FLOAT, false)
+    apply_code(editor_win)
+  elseif win_ok(editor_win) then
+    close_win(editor_win)
+    editor_win = nil
+  end
   place(transcript_win, transcript_buf, rects.transcript, TRANSCRIPT_FLOAT, false)
   command_win = place(command_win, command_buf, rects.command, COMMAND_FLOAT, false)
   apply_command_strip(command_win)
@@ -419,9 +533,11 @@ local function first_file_arg()
 end
 
 local function capture_waiting()
+  if code_buf and vim.api.nvim_buf_is_valid(code_buf) then
+    return
+  end
   local path = first_file_arg()
   if not path then
-    code_buf = nil
     return
   end
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
@@ -431,6 +547,8 @@ local function capture_waiting()
       return
     end
   end
+  code_buf = vim.fn.bufadd(path)
+  vim.bo[code_buf].buflisted = true
 end
 
 function M.tabline()
@@ -457,7 +575,7 @@ local function command_line()
     .. "   Enter send   Shift-Enter newline   <leader>nn reserved   <leader>nc reserved   <leader>nq cancel   <leader>nk cheatsheet"
 end
 
-local function paint_command_strip()
+paint_command_strip = function()
   if not command_buf or not vim.api.nvim_buf_is_valid(command_buf) then
     return
   end
@@ -474,7 +592,7 @@ local function paint_command_strip()
   vim.bo[command_buf].modifiable = false
 end
 
-local function apply_command_strip(win)
+apply_command_strip = function(win)
   vim.wo[win].winhighlight = "Normal:NaiTopBar,EndOfBuffer:NaiTopBar"
   vim.wo[win].number = false
   vim.wo[win].relativenumber = false
@@ -494,7 +612,9 @@ function M.show()
   capture_waiting()
   if visible() then
     relayout()
-    focus_composer()
+    if not code_open then
+      focus_composer()
+    end
     return
   end
   layout_lock = true
@@ -607,6 +727,43 @@ function M.open()
   if win_ok(transcript_win) then
     vim.api.nvim_set_current_win(transcript_win)
   end
+end
+
+local function focus_code()
+  if not win_ok(editor_win) then
+    return
+  end
+  vim.api.nvim_set_current_win(editor_win)
+  if vim.fn.mode():find("i", 1, true) then
+    vim.cmd("stopinsert")
+  end
+end
+
+function M.open_code()
+  if not visible() then
+    M.show()
+  end
+  if code_open and win_ok(editor_win) then
+    focus_code()
+    return
+  end
+  code_open = true
+  relayout()
+  focus_code()
+end
+
+function M.close_code()
+  if not code_open then
+    return
+  end
+  if vim.fn.getcmdtype() ~= "" then
+    vim.schedule(M.close_code)
+    return
+  end
+  remember_code_buf()
+  code_open = false
+  relayout()
+  focus_composer()
 end
 
 function M.grow_current(_)
@@ -974,12 +1131,74 @@ function M.setup()
       relayout_cheatsheet()
     end,
   })
+  vim.api.nvim_create_autocmd("WinLeave", {
+    group = group,
+    callback = function()
+      if is_code_win(vim.api.nvim_get_current_win()) then
+        remember_code_buf()
+      end
+    end,
+  })
+  vim.api.nvim_create_autocmd("WinClosed", {
+    group = group,
+    callback = function(ev)
+      if tonumber(ev.match) ~= editor_win then
+        return
+      end
+      editor_win = nil
+      if not code_open then
+        return
+      end
+      code_open = false
+      if visible() then
+        relayout()
+        focus_composer()
+      end
+    end,
+  })
+  vim.api.nvim_create_autocmd({ "BufDelete", "BufWipeout" }, {
+    group = group,
+    callback = function(ev)
+      if not code_open or not win_ok(editor_win) then
+        return
+      end
+      local shown = vim.api.nvim_win_get_buf(editor_win)
+      if ev.buf ~= shown and ev.buf ~= code_buf then
+        return
+      end
+      vim.schedule(function()
+        if not code_open or not win_ok(editor_win) then
+          return
+        end
+        local cur = vim.api.nvim_win_get_buf(editor_win)
+        if is_plain_file_buf(cur) then
+          code_buf = cur
+          return
+        end
+        local nxt = listed_unnamed() or next_listed_file(ev.buf)
+        if not nxt then
+          nxt = vim.api.nvim_create_buf(true, false)
+        end
+        code_buf = nxt
+        pcall(vim.api.nvim_win_set_buf, editor_win, nxt)
+        apply_code(editor_win)
+      end)
+    end,
+  })
   vim.keymap.set("c", "<CR>", function()
-    if vim.fn.getcmdtype() == ":" and visible() and block_ex(vim.fn.getcmdline()) then
+    if vim.fn.getcmdtype() ~= ":" or not visible() then
+      return "<CR>"
+    end
+    local line = vim.fn.getcmdline()
+    if is_code_quit(line) then
+      M.close_code()
+      return "<C-u><Esc>"
+    end
+    if block_ex(line) then
       return "<C-u><Esc>"
     end
     return "<CR>"
-  end, { expr = true, desc = "Block file Ex and :q in Chat-only" })
+  end, { expr = true, desc = "Block file Ex in Chat; :q in Code closes Code" })
   vim.keymap.set("n", "<C-w>>", function()
     if not M.grow_current(vim.v.count1) then
       vim.cmd(vim.v.count1 .. "wincmd >")
