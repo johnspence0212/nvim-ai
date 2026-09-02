@@ -17,8 +17,12 @@ Agent Client Protocol, the stdio protocol between the Profile and Cursor Agent.
 _Avoid_: LSP, MCP
 
 **Session**:
-One ACP connection between the Profile and Cursor Agent. The Profile holds at most one at a time.
+One ACP identity the Profile holds: its Chat transcript, Composer draft, and slot. The Profile can hold many; Chat shows one at a time.
 _Avoid_: conversation, thread, Chat
+
+**Session explorer**:
+A popup listing Sessions so you can hop, create, or drop. Distinct from Chat and from the command cheatsheet.
+_Avoid_: sidebar, file tree, picker, conversation list
 
 **Chat**:
 The Profile's UI for one Session: a composer you type in, and a transcript of turns above it. Distinct from Session. Distinct from Code.
