@@ -1,6 +1,6 @@
 # nvim-ai
 
-An isolated Neovim Profile (`NVIM_APPNAME=nvim-ai`). Distinct from a default Neovim configuration (`nvim` still opens that one). Cursor Agent is the AI runtime, wired via ACP. Chat is the Profile's Session UI (`<leader>nn` hide/show).
+An isolated Neovim Profile (`NVIM_APPNAME=nvim-ai`). Distinct from a default Neovim configuration (`nvim` still opens that one). Cursor Agent is the AI runtime, wired via ACP. Chat is the Profile's UI for the current Session. `<leader>nn` (or `/nn` in the Composer) starts a new Session; `<leader>ns` (or `/ns`) opens the Session explorer.
 
 Keep the git clone where it is. Neovim finds this Profile through `NVIM_APPNAME`, not by moving the repo.
 

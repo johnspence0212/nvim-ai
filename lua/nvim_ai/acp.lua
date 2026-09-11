@@ -1,51 +1,11 @@
 local M = {}
 
 local job_id = nil
-local session_id = nil
 local next_rpc_id = 0
 local pending = {}
 local stdout_rest = ""
-local inflight = false
-local cbs = nil
-
-local cancelled = false
-
-local function notify_error(msg)
-  local current = cbs
-  cbs = nil
-  if current and current.on_error then
-    vim.schedule(function()
-      inflight = false
-      current.on_error(msg)
-    end)
-  else
-    inflight = false
-  end
-end
-
-local function notify_done()
-  local current = cbs
-  cbs = nil
-  if current and current.on_done then
-    vim.schedule(function()
-      inflight = false
-      current.on_done()
-    end)
-  else
-    inflight = false
-  end
-end
-
-local function kill_job()
-  if job_id then
-    pcall(vim.fn.jobstop, job_id)
-  end
-  job_id = nil
-  session_id = nil
-  pending = {}
-  stdout_rest = ""
-  next_rpc_id = 0
-end
+local flights = {}
+local boots = {}
 
 local function usable(name)
   if vim.fn.executable(name) ~= 1 then
@@ -78,6 +38,50 @@ local function request(method, params, on_result)
   return id
 end
 
+local function finish_flight(flight, kind, msg)
+  if not flight or flight.done then
+    return
+  end
+  flight.done = true
+  if flight.acp_id then
+    flights[flight.acp_id] = nil
+  end
+  for i, boot in ipairs(boots) do
+    if boot == flight then
+      table.remove(boots, i)
+      break
+    end
+  end
+  local cbs = flight.cbs
+  if not cbs then
+    return
+  end
+  vim.schedule(function()
+    if kind == "error" and cbs.on_error then
+      cbs.on_error(msg)
+    elseif cbs.on_done then
+      cbs.on_done()
+    end
+  end)
+end
+
+local function flight_for(acp_id)
+  if acp_id and flights[acp_id] then
+    return flights[acp_id]
+  end
+  if #boots == 1 then
+    return boots[1]
+  end
+  local only
+  for _, f in pairs(flights) do
+    if only then
+      return nil
+    end
+    only = f
+  end
+  return only
+end
+
 local function handle_update(params)
   if not params or not params.update then
     return
@@ -88,12 +92,16 @@ local function handle_update(params)
   end
   local content = update.content
   local text = content and content.text
-  if type(text) ~= "string" or text == "" or not cbs or not cbs.on_chunk then
+  if type(text) ~= "string" or text == "" then
+    return
+  end
+  local flight = flight_for(params.sessionId)
+  if not flight or not flight.cbs or not flight.cbs.on_chunk then
     return
   end
   vim.schedule(function()
-    if cbs and cbs.on_chunk then
-      cbs.on_chunk(text)
+    if flight.cbs and flight.cbs.on_chunk then
+      flight.cbs.on_chunk(text)
     end
   end)
 end
@@ -137,14 +145,35 @@ local function on_stdout(_, data)
   end
 end
 
+local function kill_job()
+  if job_id then
+    pcall(vim.fn.jobstop, job_id)
+  end
+  job_id = nil
+  pending = {}
+  stdout_rest = ""
+  next_rpc_id = 0
+end
+
 local function on_exit()
   local was_job = job_id
   job_id = nil
-  session_id = nil
   pending = {}
   stdout_rest = ""
-  if was_job and inflight then
-    notify_error("Cursor Agent exited")
+  if not was_job then
+    return
+  end
+  local dying = {}
+  for _, f in pairs(flights) do
+    dying[#dying + 1] = f
+  end
+  for _, f in ipairs(boots) do
+    dying[#dying + 1] = f
+  end
+  flights = {}
+  boots = {}
+  for _, f in ipairs(dying) do
+    finish_flight(f, "error", "Cursor Agent exited")
   end
 end
 
@@ -173,6 +202,19 @@ local function spawn()
   return nil
 end
 
+local function open_session(on_ready)
+  request("session/new", {
+    cwd = vim.fn.fnamemodify(vim.fn.getcwd(), ":p"),
+    mcpServers = {},
+  }, function(session_err, session)
+    if session_err or not session or not session.sessionId then
+      on_ready(session_err or "session/new failed", nil)
+      return
+    end
+    on_ready(nil, session.sessionId)
+  end)
+end
+
 local function handshake(on_ready)
   request("initialize", {
     protocolVersion = 1,
@@ -192,20 +234,6 @@ local function handshake(on_ready)
       on_ready("unsupported ACP protocolVersion")
       return
     end
-    local function open_session()
-      request("session/new", {
-        cwd = vim.fn.fnamemodify(vim.fn.getcwd(), ":p"),
-        mcpServers = {},
-      }, function(session_err, session)
-        if session_err or not session or not session.sessionId then
-          kill_job()
-          on_ready(session_err or "session/new failed")
-          return
-        end
-        session_id = session.sessionId
-        on_ready(nil)
-      end)
-    end
     local need_login = false
     for _, method in ipairs(result.authMethods or {}) do
       if method.id == "cursor_login" then
@@ -214,7 +242,7 @@ local function handshake(on_ready)
       end
     end
     if not need_login then
-      open_session()
+      on_ready(nil)
       return
     end
     request("authenticate", { methodId = "cursor_login" }, function(auth_err)
@@ -223,13 +251,13 @@ local function handshake(on_ready)
         on_ready(auth_err)
         return
       end
-      open_session()
+      on_ready(nil)
     end)
   end)
 end
 
-local function ensure_session(on_ready)
-  if job_id and session_id then
+local function ensure_connection(on_ready)
+  if job_id then
     on_ready(nil)
     return
   end
@@ -242,50 +270,82 @@ local function ensure_session(on_ready)
   handshake(on_ready)
 end
 
-function M.is_inflight()
-  return inflight
+function M.is_inflight(acp_id)
+  if acp_id then
+    return flights[acp_id] ~= nil
+  end
+  if next(flights) ~= nil then
+    return true
+  end
+  return #boots > 0
 end
 
-function M.prompt(text, callbacks)
-  if inflight then
+function M.prompt(text, callbacks, acp_id)
+  if acp_id and flights[acp_id] then
     return false
   end
-  cancelled = false
-  inflight = true
-  cbs = callbacks
-  ensure_session(function(err)
+  local flight = { cbs = callbacks, cancelled = false, acp_id = acp_id, done = false }
+  boots[#boots + 1] = flight
+  ensure_connection(function(err)
     if err then
-      notify_error(err)
+      finish_flight(flight, "error", err)
       return
     end
-    if cancelled then
-      notify_done()
-      return
-    end
-    request("session/prompt", {
-      sessionId = session_id,
-      prompt = { { type = "text", text = text } },
-    }, function(prompt_err)
-      if prompt_err then
-        notify_error(prompt_err)
+    local function go(id)
+      flight.acp_id = id
+      flights[id] = flight
+      for i, boot in ipairs(boots) do
+        if boot == flight then
+          table.remove(boots, i)
+          break
+        end
+      end
+      if callbacks.on_acp then
+        callbacks.on_acp(id)
+      end
+      if flight.cancelled then
+        finish_flight(flight, "done")
         return
       end
-      notify_done()
+      request("session/prompt", {
+        sessionId = id,
+        prompt = { { type = "text", text = text } },
+      }, function(prompt_err)
+        if prompt_err then
+          finish_flight(flight, "error", prompt_err)
+          return
+        end
+        finish_flight(flight, "done")
+      end)
+    end
+    if acp_id then
+      go(acp_id)
+      return
+    end
+    open_session(function(session_err, id)
+      if session_err then
+        finish_flight(flight, "error", session_err)
+        return
+      end
+      go(id)
     end)
   end)
   return true
 end
 
-function M.cancel()
-  cancelled = true
-  if not inflight or not session_id then
+function M.cancel(acp_id)
+  local flight = flight_for(acp_id)
+  if not flight then
     return
   end
-  write({
-    jsonrpc = "2.0",
-    method = "session/cancel",
-    params = { sessionId = session_id },
-  })
+  flight.cancelled = true
+  if flight.acp_id then
+    write({
+      jsonrpc = "2.0",
+      method = "session/cancel",
+      params = { sessionId = flight.acp_id },
+    })
+  end
 end
 
 return M
