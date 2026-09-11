@@ -3,14 +3,16 @@ local M = {}
 local markdown = require("nvim_ai.markdown")
 local sessions = require("nvim_ai.sessions")
 
-local STROKE = "#7aa2f7"
-local CARD_BG = "#1a1b26"
-local CARD_FG = "#c0caf5"
-local LINE_NR = "#3b4261"
-local YOU = "#7aa2f7"
-local QUEUED = "#e0af68"
-local MUTED = "#565f89"
-local TOPBAR_BG = "#3d59a1"
+local STROKE = "#8ec07c"
+local CARD_BG = "#1a1e1b"
+local CARD_FG = "#d5e4cc"
+local LINE_NR = "#3e4a40"
+local YOU = "#8ec07c"
+local QUEUED = "#d8a657"
+local MUTED = "#6d7f6e"
+local TOPBAR_BG = "#3d5a40"
+local CODE_FG = "#b8e08a"
+local CODE_BG = "#243028"
 local COMPOSER_INNER = 6
 local EDGE = 1
 local GAP = 1
@@ -122,7 +124,7 @@ local function style()
   vim.opt.termguicolors = true
   vim.api.nvim_set_hl(0, "NaiTopBar", { bg = TOPBAR_BG, fg = "#ffffff" })
   vim.api.nvim_set_hl(0, "TabLine", { bg = TOPBAR_BG, fg = "#ffffff" })
-  vim.api.nvim_set_hl(0, "TabLineFill", { bg = TOPBAR_BG, fg = "#c0caf5" })
+  vim.api.nvim_set_hl(0, "TabLineFill", { bg = TOPBAR_BG, fg = CARD_FG })
   vim.api.nvim_set_hl(0, "TabLineSel", { bg = TOPBAR_BG, fg = "#ffffff" })
   vim.api.nvim_set_hl(0, "NaiCard", { fg = CARD_FG, bg = CARD_BG })
   vim.api.nvim_set_hl(0, "NaiLineNr", { fg = LINE_NR, bg = CARD_BG })
@@ -132,8 +134,8 @@ local function style()
   vim.api.nvim_set_hl(0, "NaiMdHeading", { fg = STROKE, bg = CARD_BG, bold = true })
   vim.api.nvim_set_hl(0, "NaiMdBold", { fg = CARD_FG, bg = CARD_BG, bold = true })
   vim.api.nvim_set_hl(0, "NaiMdItalic", { fg = CARD_FG, bg = CARD_BG, italic = true })
-  vim.api.nvim_set_hl(0, "NaiMdCode", { fg = "#9ece6a", bg = "#292e42" })
-  vim.api.nvim_set_hl(0, "NaiMdFence", { fg = "#9ece6a", bg = "#292e42" })
+  vim.api.nvim_set_hl(0, "NaiMdCode", { fg = CODE_FG, bg = CODE_BG })
+  vim.api.nvim_set_hl(0, "NaiMdFence", { fg = CODE_FG, bg = CODE_BG })
   vim.api.nvim_set_hl(0, "NaiMdList", { fg = STROKE, bg = CARD_BG })
   vim.api.nvim_set_hl(0, "NaiYouRail", { fg = YOU, bg = YOU })
   vim.api.nvim_set_hl(0, "NaiYouTag", { fg = YOU, bg = CARD_BG })
