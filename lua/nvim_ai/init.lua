@@ -66,7 +66,12 @@ end
 ui.bind_send(M.send)
 
 vim.keymap.set("n", "<leader>nn", "<Nop>", { desc = "Reserved" })
-vim.keymap.set("n", "<leader>nc", "<Nop>", { desc = "Reserved" })
+vim.keymap.set("n", "<leader>nc", function()
+  ui.open_code()
+end, { desc = "Open Code" })
+vim.keymap.set("n", "<leader>nx", function()
+  ui.close_code()
+end, { desc = "Close Code" })
 vim.keymap.set("n", "<leader>nq", function()
   M.cancel()
 end, { desc = "Chat cancel" })
